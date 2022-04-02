@@ -124,7 +124,7 @@ build_test_app_esp32:
     UT_GET_IDF_VER: "0"
   extends: .build_test_app_template
 
-build_test_app_esp32s2:
+.build_test_app_esp32s2:
   allow_failure: true
   variables:
     CHIP_NAME: "esp32s2"
@@ -135,7 +135,7 @@ build_test_app_esp32s2:
     UT_GET_IDF_VER: "0"
   extends: .build_test_app_template
 
-build_test_app_esp32s3:
+.build_test_app_esp32s3:
   allow_failure: true
   variables:
     CHIP_NAME: "esp32s3"
@@ -146,7 +146,7 @@ build_test_app_esp32s3:
     UT_GET_IDF_VER: "0"
   extends: .build_test_app_template
 
-build_test_app_esp32c3:
+.build_test_app_esp32c3:
   allow_failure: true
   variables:
     CHIP_NAME: "esp32c3"
@@ -157,7 +157,7 @@ build_test_app_esp32c3:
     UT_GET_IDF_VER: "0"
   extends: .build_test_app_template
 
-build_test_app_esp32_premajor_idf_rel:
+.build_test_app_esp32_premajor_idf_rel:
   variables:
     CHIP_NAME: "esp32"
     TOOLCHAIN_PREFIX: "xtensa-esp32"
@@ -167,7 +167,7 @@ build_test_app_esp32_premajor_idf_rel:
     UT_GET_IDF_VER: "1"
   extends: .build_test_app_template
 
-build_test_app_esp32s2_premajor_idf_rel:
+.build_test_app_esp32s2_premajor_idf_rel:
   variables:
     CHIP_NAME: "esp32s2"
     TOOLCHAIN_PREFIX: "xtensa-esp32s2"
@@ -177,7 +177,7 @@ build_test_app_esp32s2_premajor_idf_rel:
     UT_GET_IDF_VER: "1"
   extends: .build_test_app_template
 
-build_test_app_esp32s3_premajor_idf_rel:
+.build_test_app_esp32s3_premajor_idf_rel:
   variables:
     CHIP_NAME: "esp32s3"
     TOOLCHAIN_PREFIX: "xtensa-esp32s3"
@@ -187,7 +187,7 @@ build_test_app_esp32s3_premajor_idf_rel:
     UT_GET_IDF_VER: "1"
   extends: .build_test_app_template
 
-build_test_app_esp32c3_premajor_idf_rel:
+.build_test_app_esp32c3_premajor_idf_rel:
   variables:
     CHIP_NAME: "esp32c3"
     TOOLCHAIN_PREFIX: "riscv32-esp"
@@ -197,7 +197,7 @@ build_test_app_esp32c3_premajor_idf_rel:
     UT_GET_IDF_VER: "1"
   extends: .build_test_app_template
 
-build_test_app_esp32_legacy_idf_rel:
+.build_test_app_esp32_legacy_idf_rel:
   variables:
     CHIP_NAME: "esp32"
     TOOLCHAIN_PREFIX: "xtensa-esp32"
@@ -207,7 +207,7 @@ build_test_app_esp32_legacy_idf_rel:
     UT_GET_IDF_VER: "1"
   extends: .build_test_app_template
 
-build_nuttx_app:
+.build_nuttx_app:
   stage: build
   variables:
     TRIGGER_JOB: "OPENOCD"
