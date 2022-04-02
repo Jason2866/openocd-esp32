@@ -125,14 +125,27 @@ push_master_to_github:
     - *add_gh_key_remote
     - git push github HEAD:master
 
+# push_branch_to_github:
+#   stage: deploy
+#   image: $CI_DOCKER_REGISTRY/esp32-ci-env
+#   when: on_success
+#   dependencies: []
+#   variables:
+#     GIT_STRATEGY: clone
+#   script:
+#     - *add_gh_key_remote
+#     - git push github HEAD:master
+
 release_tag_draft:
   stage: release_stage1
   tags: [ "amd64", "internet" ]
   # <<: *release_tag_filter
   <<: *release_submit_action
   script:
-    - hub release delete ${GH_REL_TAG} || true
+    - git describe
+    - git log HEAD~5..HEAD
     - git push github --force ${GH_REL_TAG}
+    - hub release delete ${GH_REL_TAG} || true
     # release draft
     - hub release create --draft -m "${RELEASE_DESC}" ${GH_REL_TAG}
     # List of archives
@@ -268,7 +281,7 @@ create_coverage_reports:
 include:
   - '.gitlab/ci/util.yml'
   - '.gitlab/ci/build.yml'
-  # - '.gitlab/ci/build-test-app.yml'
+  - '.gitlab/ci/build-test-app.yml'
   # - '.gitlab/ci/test.yml'
   # - '.gitlab/ci/test-sanitizers.yml'
   # - '.gitlab/ci/pre-check.yml'

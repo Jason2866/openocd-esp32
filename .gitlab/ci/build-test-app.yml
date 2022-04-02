@@ -68,6 +68,10 @@
   popd
 
 .do_build_test_app: &do_build_test_app |
+  pushd $IDF_PATH
+  git status
+  git log HEAD~5..HEAD
+  popd
   if [ -z "$TEST_APP_CONFIGS" ]; then
     echo "Build ALL"
     IDF_TARGET=${CHIP_NAME} $IDF_PATH/tools/idf.py ut-build-all-configs
