@@ -128,10 +128,11 @@ push_master_to_github:
 release_tag_draft:
   stage: release_stage1
   tags: [ "amd64", "internet" ]
-  <<: *release_tag_filter
+  # <<: *release_tag_filter
   <<: *release_submit_action
   script:
     - hub release delete ${GH_REL_TAG} || true
+    - git push github --force ${GH_REL_TAG}
     # release draft
     - hub release create --draft -m "${RELEASE_DESC}" ${GH_REL_TAG}
     # List of archives
@@ -242,32 +243,32 @@ create_coverage_reports:
     - mkdir -p cov_infos
     - mkdir -p dist
     # Below lines copies all .info files into cov_infos folder
-    - > 
+    - >
       folder_list=$(ls -d build_test_app*);
       for each_folder in $folder_list ;
-      do 
+      do
       cp ${each_folder}/*.info cov_infos;
       done
     - ls -la cov_infos/
-    # Creating a html report of coverage files. 
+    # Creating a html report of coverage files.
     - genhtml --ignore-errors source cov_infos/*.info -o lcov_html_report/
-    - tar czf dist/lcov_all_report.tar.gz lcov_html_report/ 
-    # Below lines collecting all coverage file names with '-a' flag for lcov merge command. 
-    - > 
+    - tar czf dist/lcov_all_report.tar.gz lcov_html_report/
+    # Below lines collecting all coverage file names with '-a' flag for lcov merge command.
+    - >
       FILES="" ;
       for each_file in cov_infos/*.info ;
-      do 
+      do
       FILES+=" -a ${each_file}" ;
       done
     - lcov ${FILES} -o cov_infos/merged.info
-    # Line in below creates a txt file from merged coverage file which includes coverage percentages. 
+    # Line in below creates a txt file from merged coverage file which includes coverage percentages.
     - lcov --rc lcov_list_width=150 --list cov_infos/merged.info > cov_infos/metrics_input.txt
     - python3 tools/list_to_metrics.py --file cov_infos/metrics_input.txt
 
 include:
   - '.gitlab/ci/util.yml'
   - '.gitlab/ci/build.yml'
-  - '.gitlab/ci/build-test-app.yml'
-  - '.gitlab/ci/test.yml'
-  - '.gitlab/ci/test-sanitizers.yml'
-  - '.gitlab/ci/pre-check.yml'
+  # - '.gitlab/ci/build-test-app.yml'
+  # - '.gitlab/ci/test.yml'
+  # - '.gitlab/ci/test-sanitizers.yml'
+  # - '.gitlab/ci/pre-check.yml'
