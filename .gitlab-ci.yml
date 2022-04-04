@@ -142,7 +142,6 @@ release_tag_draft:
   # <<: *release_tag_filter
   <<: *release_submit_action
   script:
-    - *add_gh_key_remote
     - git describe
     - git log HEAD~5..HEAD
     - git push github --force ${GH_REL_TAG}
