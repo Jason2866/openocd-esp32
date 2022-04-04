@@ -134,9 +134,8 @@ push_branch_to_github:
     GIT_STRATEGY: clone
   script:
     - *add_gh_key_remote
-    - echo "CI_COMMIT_REF_NAME=$CI_COMMIT_REF_NAME"
     - echo "GH_REL_TAG=$CI_COMMIT_TAG"
-    - git push github HEAD:$CI_COMMIT_REF_NAME
+    - git push github --force HEAD:fix/push_rel_tag_gh
     - git push github --force ${CI_COMMIT_TAG}
 
 release_tag_draft:
