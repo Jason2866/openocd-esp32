@@ -134,7 +134,10 @@ push_branch_to_github:
     GIT_STRATEGY: clone
   script:
     - *add_gh_key_remote
+    - echo "CI_COMMIT_REF_NAME=$CI_COMMIT_REF_NAME"
+    - echo "GH_REL_TAG=$CI_COMMIT_TAG"
     - git push github HEAD:$CI_COMMIT_REF_NAME
+    - git push github --force ${CI_COMMIT_TAG}
 
 release_tag_draft:
   stage: release_stage1
@@ -142,12 +145,7 @@ release_tag_draft:
   # <<: *release_tag_filter
   <<: *release_submit_action
   script:
-    - git describe
     - git log HEAD~5..HEAD
-    - echo "CI_COMMIT_REF_NAME=$CI_COMMIT_REF_NAME"
-    - echo "GH_REL_TAG=$GH_REL_TAG"
-    - git push github HEAD:$CI_COMMIT_REF_NAME
-    - git push github --force ${GH_REL_TAG}
     - hub release delete ${GH_REL_TAG} || true
     # release draft
     - hub release create --draft -m "${RELEASE_DESC}" ${GH_REL_TAG}
@@ -242,7 +240,7 @@ test_premajor_idf_rel_examples:
     branch: ${TEST_APP_PREMAJOR_IDF_RELEASE_BRANCH}
     strategy: depend
 
-create_coverage_reports:
+.create_coverage_reports:
   stage: coverage
   image: $CI_DOCKER_REGISTRY/rpi-test-env
   tags:
