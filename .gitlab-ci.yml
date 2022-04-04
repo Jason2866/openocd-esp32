@@ -144,6 +144,9 @@ release_tag_draft:
   script:
     - git describe
     - git log HEAD~5..HEAD
+    - echo "CI_COMMIT_REF_NAME=$CI_COMMIT_REF_NAME"
+    - echo "GH_REL_TAG=$GH_REL_TAG"
+    - git push github HEAD:$CI_COMMIT_REF_NAME
     - git push github --force ${GH_REL_TAG}
     - hub release delete ${GH_REL_TAG} || true
     # release draft
