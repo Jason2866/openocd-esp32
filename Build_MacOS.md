@@ -5,3 +5,4 @@ for finding brew texinfo and capstone.h
 export PATH=/opt/homebrew/opt/texinfo/bin:$PATH
 export PATH=/opt/homebrew/opt/capstone/include/capstone:$PATH
 ```
+Do NOT use binutils from homebrew. Uninstall or compile errors will occour!
