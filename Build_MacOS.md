@@ -3,4 +3,5 @@
 for finding brew texinfo this is needed:
 ```
 export PATH=/opt/homebrew/opt/texinfo/bin:$PATH
+export PATH=/opt/homebrew/opt/capstone/include/capstone:$PATH
 ```
