@@ -52,7 +52,7 @@ static int dsp5680xx_build_sector_list(struct flash_bank *bank)
 	for (unsigned int i = 0; i < bank->num_sectors; ++i) {
 		bank->sectors[i].offset = i * HFM_SECTOR_SIZE;
 		bank->sectors[i].size = HFM_SECTOR_SIZE;
-		offset += bank->sectors[i].size;
+		offset = offset + bank->sectors[i].size;
 		bank->sectors[i].is_erased = -1;
 		bank->sectors[i].is_protected = -1;
 	}
