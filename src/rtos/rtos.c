@@ -1,19 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   Copyright (C) 2011 by Broadcom Corporation                            *
  *   Evan Hunter - ehunter@broadcom.com                                    *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
@@ -153,6 +142,9 @@ int rtos_create(struct jim_getopt_info *goi, struct target *target)
 	if (e != JIM_OK)
 		return e;
 
+	if (strcmp(cp, "none") == 0)
+		return JIM_OK;
+
 	if (strcmp(cp, "auto") == 0) {
 		/* Auto detect tries to look up all symbols for each RTOS,
 		 * and runs the RTOS driver's _detect() function when GDB
@@ -172,7 +164,7 @@ int rtos_create(struct jim_getopt_info *goi, struct target *target)
 	res = Jim_GetResult(goi->interp);
 	for (x = 0; rtos_types[x]; x++)
 		Jim_AppendStrings(goi->interp, res, rtos_types[x]->name, ", ", NULL);
-	Jim_AppendStrings(goi->interp, res, " or auto", NULL);
+	Jim_AppendStrings(goi->interp, res, ", auto or none", NULL);
 
 	return JIM_ERR;
 }
@@ -325,6 +317,17 @@ done:
 	return rtos_detected;
 }
 
+int get_thread_number_by_id(struct target *target, threadid_t threadid) {
+	if ((target->rtos) && (target->rtos->thread_details)) {
+		for (int thread_num = 0; thread_num < target->rtos->thread_count; thread_num++) {
+			if (target->rtos->thread_details[thread_num].threadid == threadid &&
+				target->rtos->thread_details[thread_num].exists)
+					return thread_num;
+		}
+	}
+	return -1;
+}
+
 int rtos_thread_packet(struct connection *connection, char const *packet, int packet_size)
 {
 	struct target *target = get_target_from_connection(connection);
@@ -333,18 +336,9 @@ int rtos_thread_packet(struct connection *connection, char const *packet, int pa
 		if ((target->rtos) && (target->rtos->thread_details) &&
 				(target->rtos->thread_count != 0)) {
 			threadid_t threadid = 0;
-			int found = -1;
 			sscanf(packet, "qThreadExtraInfo,%" SCNx64, &threadid);
 
-			if ((target->rtos) && (target->rtos->thread_details)) {
-				int thread_num;
-				for (thread_num = 0; thread_num < target->rtos->thread_count; thread_num++) {
-					if (target->rtos->thread_details[thread_num].threadid == threadid) {
-						if (target->rtos->thread_details[thread_num].exists)
-							found = thread_num;
-					}
-				}
-			}
+			int found = get_thread_number_by_id(target, threadid);
 			if (found == -1) {
 				gdb_put_packet(connection, "E01", 3);	/* thread not found */
 				return ERROR_OK;
@@ -416,6 +410,19 @@ int rtos_thread_packet(struct connection *connection, char const *packet, int pa
 	} else if (strncmp(packet, "qsThreadInfo", 12) == 0) {
 		gdb_put_packet(connection, "l", 1);
 		return ERROR_OK;
+	} else if (strncmp(packet, "qGetTLSAddr", 11) == 0) {
+	        threadid_t threadid;
+	        target_addr_t offset;
+	        target_addr_t lm;
+	        sscanf(packet, "qGetTLSAddr:%" SCNx64 ",%" SCNx64 ",%" SCNx64, &threadid, &offset, &lm);
+		int found = get_thread_number_by_id(target, threadid);
+		if (found == -1 || target->rtos->thread_details[found].tls_addr == 0)
+			return GDB_THREAD_PACKET_NOT_CONSUMED;
+		target_addr_t tlv_addr = target->rtos->thread_details[found].tls_addr + offset;
+		char answer[sizeof(tlv_addr) * 2 + 1] = {0}; // hex addr + '\0'
+		sprintf(answer, "%" PRIx64, tlv_addr);
+		gdb_put_packet(connection, answer, strlen(answer));
+		return ERROR_OK;
 	} else if (strncmp(packet, "qAttached", 9) == 0) {
 		gdb_put_packet(connection, "1", 1);
 		return ERROR_OK;
@@ -438,17 +445,8 @@ int rtos_thread_packet(struct connection *connection, char const *packet, int pa
 		return ERROR_OK;
 	} else if (packet[0] == 'T') {	/* Is thread alive? */
 		threadid_t threadid;
-		int found = -1;
 		sscanf(packet, "T%" SCNx64, &threadid);
-		if ((target->rtos) && (target->rtos->thread_details)) {
-			int thread_num;
-			for (thread_num = 0; thread_num < target->rtos->thread_count; thread_num++) {
-				if (target->rtos->thread_details[thread_num].threadid == threadid) {
-					if (target->rtos->thread_details[thread_num].exists)
-						found = thread_num;
-				}
-			}
-		}
+		int found = get_thread_number_by_id(target, threadid);
 		if (found != -1)
 			gdb_put_packet(connection, "OK", 2);	/* thread alive */
 		else

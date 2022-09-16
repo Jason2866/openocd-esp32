@@ -20,6 +20,7 @@ class DebuggerSpecialTestsImpl:
     """
 
     @idf_ver_min_for_arch('latest', ['riscv32'])
+    @skip_for_chip(['esp32c2'])
     def test_restart_debug_from_crash(self):
         """
             This test checks that debugger can operate correctly after SW reset with stalled CPU.
@@ -31,38 +32,6 @@ class DebuggerSpecialTestsImpl:
         # under OOCD panic handler sets BP on instruction which generated the exception and stops execution there
         self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_SIGTRAP, 'crash_task', ['crash'], outmost_func_name='crash_task')
         self.prepare_app_for_debugging(self.test_app_cfg.app_off)
-
-    @skip_for_chip(['esp32s3'])
-    def test_gdb_regs_mapping(self):
-        """
-            This test checks that GDB and OpenOCD has identical registers mapping.
-            1) Cycles over registers and assigns them specific values using GDB command
-            2) Uses OpenOCD command to check that registers have expected values
-        """
-        # should fail for any new chip.
-        # just to be sure that this test is revised when new chip support is added
-        self.fail_if_not_hw_id([r'esp32-[.]*', r'esp32s2-[.]*', r'esp32c3-[.]*', r'esp32s3-[.]*'])
-        regs = self.gdb.get_reg_names()
-        i = 10
-        for reg in regs:
-            if (len(reg) == 0 or reg == 'zero'):
-                continue
-
-            # TODO: With the new gdb version (gdb9) privileged regs now can be set. So, break condition needs to be changed for each chip.
-            # eg. Now mmid is pass but it is failing at a0 for esp32
-            if reg == 'mmid' or reg == 'mstatus' or reg == 'q0':
-                break
-
-            # set to reasonable value, because GDB tries to read memory @ pc
-            val = 0x40000400 if reg == 'pc' else i
-            self.gdb.set_reg(reg, val)
-            self.gdb.console_cmd_run('flushregs')
-            self.assertEqual(self.gdb.get_reg(reg), val)
-            _,res_str = self.gdb.monitor_run('reg %s' % reg, output_type='stdout')
-            self.assertEqual(self.oocd.parse_reg_val(reg, res_str), val)
-            i += 1
-        # reset chip to clear all changes in regs, otherwise the next test can fail
-        self.gdb.target_reset()
 
     def _debug_image(self):
         self.select_sub_test(100)
@@ -77,6 +46,7 @@ class DebuggerSpecialTestsImpl:
         self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_BP, 'vTaskDelay', ['vTaskDelay0'])
         self.clear_bps()
 
+    @skip_for_chip(['esp32s3', 'esp32'])
     def test_debugging_works_after_hw_reset(self):
         """
             This test checks that debugging works after HW reset.
@@ -102,8 +72,8 @@ class DebuggerSpecialTestsImpl:
         self.prepare_app_for_debugging(self.test_app_cfg.app_off)
         self._debug_image()
 
-    @idf_ver_min('4.3')
     @idf_ver_min_for_arch('latest', ['riscv32'])
+    @skip_for_chip(['esp32c2'])
     def test_bp_and_wp_set_by_program(self):
         """
             This test checks that breakpoints and watchpoints set by program on target work.
@@ -124,10 +94,43 @@ class DebuggerSpecialTestsImpl:
         # watchpoint hit on read var in 'target_bp_func2'
         self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_2')
 
+    @only_for_arch(['xtensa'])
+    def test_exception_xtensa(self):
+        """
+        This test checks that expected exception cause string equal to the OpenOCD output.
+        """
+        bps = ["exception_bp_1", "exception_bp_2", "exception_bp_3", "exception_bp_4"]
+        expected_strings = ["Halt cause (0) - (Illegal instruction)",
+                            "Halt cause (28) - (Load prohibited)",
+                            "Halt cause (29) - (Store prohibited)",
+                            "Halt cause (6) - (Integer divide by zero)"]
+        for i in range (len(bps)):
+            self.add_bp(bps[i])
+            self.select_sub_test(804 + i)
+            self.resume_exec()
+            rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
+            self.assertEqual(rsn, dbg.TARGET_STOP_REASON_BP)
+            old_pc = self.gdb.get_reg('pc')
+            faddr = self.gdb.extract_exec_addr(self.gdb.data_eval_expr('&%s' % bps[i]))
+            self.assertEqual(old_pc, faddr)
+            self.clear_bps()
+            target_output = ''
+            def _target_stream_handler(type, stream, payload):
+                nonlocal target_output
+                target_output += payload
+            self.gdb.stream_handler_add('target', _target_stream_handler)
+            try:
+                self.step()
+            finally:
+                self.gdb.stream_handler_remove('target', _target_stream_handler)
+            self.assertTrue(expected_strings[i] in target_output)
+            self.gdb.target_reset()
+            self.gdb.add_bp('app_main')
+            self.run_to_bp(dbg.TARGET_STOP_REASON_BP, 'app_main')
 
 # to be skipped for any board with ESP32-S2 chip
 # TODO: enable these tests when PSRAM is supported for ESP32-S2
-@skip_for_chip(['esp32s2', 'esp32c3'])
+@skip_for_chip(['esp32s2', 'esp32c3', 'esp32c2'])
 class PsramTestsImpl:
     """ PSRAM specific test cases generic for dual and single core modes
     """
@@ -161,7 +164,7 @@ class PsramTestsImpl:
 class DebuggerSpecialTestsDual(DebuggerGenericTestAppTestsDual, DebuggerSpecialTestsImpl):
     """ Test cases for dual core mode
     """
-    @skip_for_chip(['esp32s3'])
+    @skip_for_chip(['esp32s3', 'esp32'])
     def test_cores_states_after_esptool_connection(self):
         """
             This test checks that cores are in running or halted state after esptool connection.
@@ -194,7 +197,53 @@ class DebuggerSpecialTestsDual(DebuggerGenericTestAppTestsDual, DebuggerSpecialT
 class DebuggerSpecialTestsSingle(DebuggerGenericTestAppTestsSingle, DebuggerSpecialTestsImpl):
     """ Test cases for single core mode
     """
-    pass
+
+    def test_gdb_regs_mapping(self):
+        """
+            This test checks that GDB and OpenOCD has identical registers mapping.
+            1) Cycles over registers and assigns them specific values using GDB command
+            2) Uses OpenOCD command to check that registers have expected values
+        """
+        # should fail for any new chip.
+        # just to be sure that this test is revised when new chip support is added
+        self.fail_if_not_hw_id([r'esp32-[.]*', r'esp32s2-[.]*', r'esp32c2-[.]*', r'esp32c3-[.]*', r'esp32s3-[.]*'])
+        regs = self.gdb.get_reg_names()
+        i = 10
+
+        # GDB sets registers in current thread, here we assume that it always belongs to CPU0
+        # select CPU0 as current target in OpenOCD for multi-core chips
+        _, res_str = self.gdb.monitor_run('target names', output_type='stdout')
+        if res_str.endswith('\\n'):
+            res_str = res_str[:-2]
+        targets = res_str.split()
+        if len(targets) > 1:
+            for t in targets:
+                if t.endswith('.cpu0'):
+                    self.gdb.monitor_run('targets %s' % t, output_type='stdout')
+                    break
+
+        for reg in regs:
+            if (len(reg) == 0 or reg == 'zero'):
+                continue
+
+            # TODO: With the new gdb version (gdb9) privileged regs now can be set. So, break condition needs to be changed for each chip.
+            # eg. Now mmid is pass but it is failing at a0 for esp32
+            if reg == 'mmid' or reg == 'mstatus' or reg == 'q0':
+                break
+
+            # set to reasonable value, because GDB tries to read memory @ pc
+            val = 0x40000400 if reg == 'pc' else i
+            self.gdb.set_reg(reg, val)
+            self.gdb.console_cmd_run('flushregs')
+            self.assertEqual(self.gdb.get_reg(reg), val)
+            _,res_str = self.gdb.monitor_run('reg %s' % reg, output_type='stdout')
+            read_val = self.oocd.parse_reg_val(reg, res_str)
+            get_logger().debug("Check reg value '%s': %d == %d", reg, read_val, val)
+            self.assertEqual(read_val, val)
+            i += 1
+        # reset chip to clear all changes in regs, otherwise the next test can fail
+        self.gdb.target_reset()
+
 
 class PsramTestAppTestsDual(DebuggerGenericTestAppTests):
     """ Base class to run tests which use PSRAM test app in dual core mode

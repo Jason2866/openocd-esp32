@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   Copyright (C) 2021 by Adrian Negreanu                                 *
  *   groleo@gmail.com                                                      *
@@ -19,19 +21,6 @@
  *                                                                         *
  *   Copyright (C) 2013 by Spencer Oliver                                  *
  *   spen@spen-soft.co.uk                                                  *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
@@ -1405,18 +1394,18 @@ static void debug_parse_cmsis_buf(const uint8_t *cmd, int cmdlen)
 	for (int i = 0; i < cmdlen; ++i)
 		printf(" %02x", cmd[i]);
 	printf("\n");
-	switch (cmd[1]) {
+	switch (cmd[0]) {
 		case CMD_DAP_JTAG_SEQ: {
-			printf("cmsis-dap jtag sequence command %02x (n=%d)\n", cmd[1], cmd[2]);
+			printf("cmsis-dap jtag sequence command %02x (n=%d)\n", cmd[0], cmd[1]);
 			/*
-			 * #2 = number of sequences
-			 * #3 = sequence info 1
-			 * #4...4+n_bytes-1 = sequence 1
+			 * #1 = number of sequences
+			 * #2 = sequence info 1
+			 * #3...4+n_bytes-1 = sequence 1
 			 * #4+n_bytes = sequence info 2
 			 * #5+n_bytes = sequence 2 (single bit)
 			 */
-			int pos = 3;
-			for (int seq = 0; seq < cmd[2]; ++seq) {
+			int pos = 2;
+			for (int seq = 0; seq < cmd[1]; ++seq) {
 				uint8_t info = cmd[pos++];
 				int len = info & DAP_JTAG_SEQ_TCK;
 				if (len == 0)

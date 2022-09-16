@@ -1,29 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   Generic flash driver for Espressif chips                              *
  *   Copyright (C) 2021 Espressif Systems Ltd.                             *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program; if not, write to the                         *
- *   Free Software Foundation, Inc.,                                       *
- *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.           *
  ***************************************************************************/
 
-#ifndef FLASH_ESP_H
-#define FLASH_ESP_H
+#ifndef OPENOCD_FLASH_NOR_ESP_FLASH_H
+#define OPENOCD_FLASH_NOR_ESP_FLASH_H
 
 #include <target/target.h>
 #include <helper/command.h>
-#include <target/esp_algorithm.h>
+#include <target/espressif/esp_algorithm.h>
 #include <target/breakpoints.h>
 #include <flash/nor/core.h>
 
@@ -52,7 +39,7 @@ struct esp_flash_apptrace_hw {
 		uint32_t block_id,
 		const uint8_t *data,
 		uint32_t size);
-	uint8_t *(*usr_block_get)(uint8_t *buffer, uint32_t *size);
+	uint8_t *(*usr_block_get)(uint8_t * buffer, uint32_t * size);
 	uint32_t (*block_max_size_get)(struct target *target);
 	uint32_t (*usr_block_max_size_get)(struct target *target);
 };
@@ -116,10 +103,10 @@ int esp_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
 	const struct esp_flasher_stub_config *(*get_stub)(struct flash_bank *bank),
 	const struct esp_flash_apptrace_hw *apptrace_hw,
 	const struct algorithm_hw *stub_hw);
-int esp_flash_protect(struct flash_bank *bank, int set, unsigned first, unsigned last);
+int esp_flash_protect(struct flash_bank *bank, int set, unsigned int first, unsigned int last);
 int esp_flash_protect_check(struct flash_bank *bank);
 int esp_flash_blank_check(struct flash_bank *bank);
-int esp_flash_erase(struct flash_bank *bank, unsigned first, unsigned last);
+int esp_flash_erase(struct flash_bank *bank, unsigned int first, unsigned int last);
 int esp_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 	uint32_t offset, uint32_t count);
 int esp_flash_read(struct flash_bank *bank, uint8_t *buffer,
@@ -139,4 +126,4 @@ COMMAND_HELPER(esp_flash_cmd_set_compression, struct target *target);
 COMMAND_HELPER(esp_flash_parse_cmd_verify_bank_hash, struct target *target);
 COMMAND_HELPER(esp_flash_parse_cmd_clock_boost, struct target *target);
 
-#endif	/*FLASH_ESP_H*/
+#endif	/* OPENOCD_FLASH_NOR_ESP_FLASH_H */

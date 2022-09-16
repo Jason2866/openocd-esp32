@@ -1,22 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   ESP32-S2 flash driver for OpenOCD                                     *
  *   Copyright (C) 2017 Espressif Systems Ltd.                             *
- *   Author: Alexey Gerenkov <alexey@espressif.com>                        *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program; if not, write to the                         *
- *   Free Software Foundation, Inc.,                                       *
- *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.           *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
@@ -24,10 +10,10 @@
 #endif
 
 #include "imp.h"
-#include <target/xtensa_algorithm.h>
-#include <target/esp_xtensa_apptrace.h>
-#include <target/esp_xtensa.h>
-#include <target/esp32s2.h>
+#include <target/xtensa/xtensa_algorithm.h>
+#include <target/espressif/esp_xtensa_apptrace.h>
+#include <target/espressif/esp_xtensa.h>
+#include <target/espressif/esp32s2.h>
 #include "esp_xtensa.h"
 #include "contrib/loaders/flash/esp/esp32s2/stub_flasher_image.h"
 
@@ -56,24 +42,17 @@ static struct esp_flasher_stub_config s_esp32s2_stub_cfg = {
 
 static bool esp32s2_is_irom_address(target_addr_t addr)
 {
-	return (addr >= ESP32_S2_IROM_LOW && addr < ESP32_S2_IROM_HIGH);
+	return addr >= ESP32_S2_IROM_LOW && addr < ESP32_S2_IROM_HIGH;
 }
 
 static bool esp32s2_is_drom_address(target_addr_t addr)
 {
-	return (addr >= ESP32_S2_DROM_LOW && addr < ESP32_S2_DROM_HIGH);
+	return addr >= ESP32_S2_DROM_LOW && addr < ESP32_S2_DROM_HIGH;
 }
 
 static const struct esp_flasher_stub_config *esp32s2_get_stub(struct flash_bank *bank)
 {
-	struct esp32s2_common *esp32 = target_to_esp32s2(bank->target);
-
-	if (esp32->chip_rev == ESP32_S2_REV_BETA) {
-		LOG_WARNING("esp32s2-beta support is removed. Using esp32s2 stub instead");
-		return &s_esp32s2_stub_cfg;
-	} else if (esp32->chip_rev == ESP32_S2_REV_0)
-		return &s_esp32s2_stub_cfg;
-	return NULL;
+	return &s_esp32s2_stub_cfg;
 }
 
 /* flash bank <bank_name> esp32 <base> <size> 0 0 <target#>

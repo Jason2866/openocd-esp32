@@ -1,29 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   ESP RISCV flash driver for OpenOCD                                    *
  *   Copyright (C) 2021 Espressif Systems Ltd.                             *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program; if not, write to the                         *
- *   Free Software Foundation, Inc.,                                       *
- *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.           *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
 #include "esp_riscv.h"
-#include <target/esp_riscv_apptrace.h>
-#include <target/esp_riscv_algorithm.h>
+#include <target/espressif/esp_riscv_apptrace.h>
+#include <target/espressif/esp_riscv_algorithm.h>
 
 static const struct esp_flash_apptrace_hw s_esp_riscv_flash_apptrace_hw = {
 	.info_init = esp_riscv_apptrace_info_init,

@@ -1,29 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   ESP32-C3 flash driver for OpenOCD                                     *
  *   Copyright (C) 2021 Espressif Systems Ltd.                             *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program; if not, write to the                         *
- *   Free Software Foundation, Inc.,                                       *
- *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.           *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
-#include <target/esp32c3.h>
-#include <target/esp_riscv_algorithm.h>
+#include <target/espressif/esp32c3.h>
+#include <target/espressif/esp_riscv_algorithm.h>
 #include "imp.h"
 #include "esp_riscv.h"
 #include "contrib/loaders/flash/esp/esp32c3/stub_flasher_image.h"
@@ -56,12 +43,12 @@ static const struct esp_flasher_stub_config s_esp32c3_stub_cfg = {
 
 static bool esp32c3_is_irom_address(target_addr_t addr)
 {
-	return (addr >= ESP32C3_IROM_LOW && addr < ESP32C3_IROM_HIGH);
+	return addr >= ESP32C3_IROM_LOW && addr < ESP32C3_IROM_HIGH;
 }
 
 static bool esp32c3_is_drom_address(target_addr_t addr)
 {
-	return (addr >= ESP32C3_DROM_LOW && addr < ESP32C3_DROM_HIGH);
+	return addr >= ESP32C3_DROM_LOW && addr < ESP32C3_DROM_HIGH;
 }
 
 static const struct esp_flasher_stub_config *esp32c3_get_stub(struct flash_bank *bank)

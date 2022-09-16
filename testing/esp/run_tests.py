@@ -58,6 +58,14 @@ BOARD_TCL_CONFIG = {
         'chip_name' : 'esp32s2',
         'target_triple' : 'xtensa-esp32s2-elf'
     },
+    'esp32c2-ftdi' :  {
+        'files' : [
+            os.path.join('board', 'esp32c2-ftdi.cfg')
+        ],
+        'commands' : [],
+        'chip_name' : 'esp32c2',
+        'target_triple' : 'riscv32-esp-elf'
+    },
     'esp32c3-ftdi' :  {
         'files' : [
             os.path.join('board', 'esp32c3-ftdi.cfg')
@@ -162,7 +170,7 @@ def dbg_start(toolchain, oocd, oocd_tcl, oocd_cfg_files, oocd_cfg_cmds, debug_oo
         _gdb_inst = dbg.create_gdb(chip_name=chip_name,
                             target_triple=target_triple,
                             gdb_path='%sgdb' % toolchain,
-                            remote_target='127.0.0.1:%d' % dbg.Oocd.GDB_PORT,
+                            extended_remote_mode='127.0.0.1:%d' % dbg.Oocd.GDB_PORT,
                             log_level=log_level,
                             log_stream_handler=log_stream,
                             log_file_handler=log_file)

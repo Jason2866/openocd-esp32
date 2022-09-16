@@ -1,11 +1,21 @@
 #include "driver/gpio.h"
-#include "esp_spi_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #include "gen_ut_app.h"
-
 #include "esp_log.h"
+#if UT_IDF_VER < MAKE_UT_IDF_VER(5,0,0,0)
+#include "esp_spi_flash.h"
+#define SET_BP(id, addr)                cpu_hal_set_breakpoint(id, addr)
+#define SET_WP(id, addr, size, trigger) cpu_hal_set_watchpoint(id, addr, size, trigger)
+#else
+#define SET_BP(id, addr)                esp_cpu_set_breakpoint(id, addr)
+#define SET_WP(id, addr, size, trigger) esp_cpu_set_watchpoint(id, addr, size, trigger)
+#include "spi_flash_mmap.h"
+#include "esp_private/cache_utils.h"
+#include "hal/cpu_hal.h"
+#endif
+
 const static char *TAG = "special_test";
 
 static void crash_task(void *pvParameter)
@@ -44,7 +54,7 @@ static void cache_check_task(void *pvParameter)
 
 static void psram_check_task(void *pvParameter)
 {
-#if CONFIG_IDF_TARGET_ESP32S3
+#if CONFIG_IDF_TARGET_ESP32S3 && UT_IDF_VER < MAKE_UT_IDF_VER(5,0,0,0)
     /* In ESP32S3, PSRAM is mapped from high to low. Check s_mapped_vaddr_start at esp32s3/spiram.c
         There is a plan to change from low to high same as ESP32
         Follow up jira https://jira.espressif.com:8443/browse/IDF-4318
@@ -81,9 +91,65 @@ static void psram_check_task(void *pvParameter)
         vTaskDelay(100 / portTICK_PERIOD_MS);           TEST_BREAK_LOC(vTaskDelay1);
     }
 }
+
+static void illegal_instruction_exc(void *pvParameter)
+{
+    int core_id = xPortGetCoreID();
+    ESP_LOGI(TAG, "CPU[%d]: Illegal instruction exception test started", core_id);
+    __asm__ __volatile__ (
+        ".global exception_bp\n" \
+        ".type   exception_bp,@function\n" \
+        "exception_bp_1:\n" \
+        "ILL\n" \
+    );
+}
+
+static void load_prohibited_exc(void *pvParameter)
+{
+    int core_id = xPortGetCoreID();
+    ESP_LOGI(TAG, "CPU[%d]: Load prohibited exception test started", core_id);
+    register long a2 asm ("a2") = 0;
+    register long a3 asm ("a3") = 0;
+    __asm__ __volatile__ (
+        ".global exception_bp_2\n" \
+        ".type   exception_bp_2,@function\n" \
+        "exception_bp_2:\n" \
+        "L8UI a3, a2, 0xFFFFFFFF\n" \
+        : "+r"(a2) : "r"(a3)
+    );
+}
+
+static void store_prohibited_exc(void *pvParameter)
+{
+    int core_id = xPortGetCoreID();
+    ESP_LOGI(TAG, "CPU[%d]: Store prohibited exception test started", core_id);
+    register long a2 asm ("a2") = 0;
+    register long a3 asm ("a3") = 0;
+    __asm__ __volatile__ (
+        ".global exception_bp_3\n" \
+        ".type   exception_bp_3,@function\n" \
+        "exception_bp_3:\n" \
+        "S8I a3, a2, 0\n" \
+        : "+r"(a2) : "r"(a3)
+    );
+}
+
+static void divide_by_zero_exc(void *pvParameter)
+{
+    int core_id = xPortGetCoreID();
+    ESP_LOGI(TAG, "CPU[%d]: Divide by zero exception test started", core_id);
+    register long a2 asm ("a2") = 0;
+    register long a3 asm ("a3") = 0;
+    __asm__ __volatile__ (
+        ".global exception_bp_4\n" \
+        ".type   exception_bp_4,@function\n" \
+        "exception_bp_4:\n" \
+        "QUOS a2, a2, a3\n" \
+        : "+r"(a2) : "r"(a3)
+    );
+}
 #endif
 
-#if UT_IDF_VER >= MAKE_UT_IDF_VER(4,3,0,0)
 volatile static int s_var1;
 volatile static int s_var2;
 
@@ -102,7 +168,7 @@ static void target_bp_func1()
     ESP_LOGI(TAG, "Target BP func '%s' on core %d.", __func__,  xPortGetCoreID());
     volatile int tmp = s_var1; (void)tmp; TEST_BREAK_LOC(target_wp_var1_2);
     /* we've just resumed from WP on previous line, deugger could modify breakpoints config, so set next BP here */
-    cpu_hal_set_breakpoint(1, target_bp_func2);
+    SET_BP(1, target_bp_func2);
     target_bp_func2();
 }
 
@@ -110,13 +176,12 @@ static void target_bp_task(void *pvParameter)
 {
     ESP_LOGI(TAG, "Start target BP task on core %d", xPortGetCoreID());
 
-    cpu_hal_set_breakpoint(0, target_bp_func1);
-    cpu_hal_set_watchpoint(0, (const void *)&s_var1, sizeof(s_var1), WATCHPOINT_TRIGGER_ON_RW);
-    cpu_hal_set_watchpoint(1, (const void *)&s_var2, sizeof(s_var2), WATCHPOINT_TRIGGER_ON_RW);
+    SET_BP(0, target_bp_func1);
+    SET_WP(0, (void *)&s_var1, sizeof(s_var1), WATCHPOINT_TRIGGER_ON_RW);
+    SET_WP(1, (void *)&s_var2, sizeof(s_var2), WATCHPOINT_TRIGGER_ON_RW);
 
     target_bp_func1();
 }
-#endif /* UT_IDF_VER >= MAKE_UT_IDF_VER(4,3,0,0) */
 
 ut_result_t special_test_do(int test_num)
 {
@@ -137,17 +202,34 @@ ut_result_t special_test_do(int test_num)
             xTaskCreatePinnedToCore(&psram_check_task, "psram_task", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
             break;
         }
+        case 804:
+        {
+            xTaskCreatePinnedToCore(&illegal_instruction_exc, "illegal_instruction_exc", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
+            break;
+        }
+        case 805:
+        {
+            xTaskCreatePinnedToCore(&load_prohibited_exc, "load_prohibited_exc", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
+            break;
+        }
+        case 806:
+        {
+            xTaskCreatePinnedToCore(&store_prohibited_exc, "store_prohibited_exc", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
+            break;
+        }
+        case 807:
+        {
+            xTaskCreatePinnedToCore(&divide_by_zero_exc, "divide_by_zero_exc", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
+            break;
+        }
 #endif
-#if UT_IDF_VER >= MAKE_UT_IDF_VER(4,3,0,0)
         case 803:
         {
             xTaskCreatePinnedToCore(&target_bp_task, "target_bp_task", 2048, NULL, 5, NULL, portNUM_PROCESSORS-1);
             break;
         }
-#endif /* UT_IDF_VER >= MAKE_UT_IDF_VER(4,3,0,0) */
         default:
             return UT_UNSUPPORTED;
     }
     return UT_OK;
 }
-

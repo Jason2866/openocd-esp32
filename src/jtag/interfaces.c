@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /***************************************************************************
  *   Copyright (C) 2005 by Dominic Rath                                    *
  *   Dominic.Rath@gmx.de                                                   *
@@ -13,19 +15,6 @@
  *   zw@superlucidity.net                                                  *
  *                                                                         *
  *   Copyright (C) 2020, Ampere Computing LLC                              *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
@@ -153,10 +142,12 @@ extern struct adapter_driver stlink_dap_adapter_driver;
 #if BUILD_RSHIM == 1
 extern struct adapter_driver rshim_dap_adapter_driver;
 #endif
-
+#if BUILD_AM335XGPIO == 1
+extern struct adapter_driver am335xgpio_adapter_driver;
+#endif
 #if BUILD_ESP_REMOTE
 extern struct adapter_driver esp_remote_adapter_driver;
-#endif //BUILD_ESP_REMOTE
+#endif
 
 /**
  * The list of built-in JTAG interfaces, containing entries for those
@@ -274,8 +265,11 @@ struct adapter_driver *adapter_drivers[] = {
 #if BUILD_RSHIM == 1
 		&rshim_dap_adapter_driver,
 #endif
+#if BUILD_AM335XGPIO == 1
+		&am335xgpio_adapter_driver,
+#endif
 #if BUILD_ESP_REMOTE
 		&esp_remote_adapter_driver,
-#endif /* standard drivers */
+#endif
 		NULL,
 	};

@@ -28,11 +28,6 @@
 
 #define UT_IDF_VER_LATEST           0xFFFFFFFF
 
-#if UT_IDF_VER < MAKE_UT_IDF_VER(4,3,0,0)
-/* multi-arch support appeared in 4.3, so assume Xtensa arch for earlier releases */
-#define CONFIG_IDF_TARGET_ARCH_XTENSA 1
-#endif
-
 #ifndef __ASSEMBLER__
 
 #define TEST_BREAK_LOC(_nm_)  \
@@ -59,7 +54,11 @@ typedef ut_result_t (*test_func_t)(int test_num);
 /* Can run 'make menuconfig' to choose the GPIO to blink,
    or you can edit the following line and set a number here.
 */
+#if CONFIG_IDF_TARGET_ESP32C2
+#define BLINK_GPIO 8
+#else
 #define BLINK_GPIO CONFIG_BLINK_GPIO
+#endif
 
 #endif
 

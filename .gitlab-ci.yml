@@ -1,7 +1,15 @@
 stages:
   - pre_check
-  - build
-  - test
+  - scan_build
+  - build_openocd
+  - build_idf4.x
+  - build_idf5.x
+  - build_nuttx
+  - test_idf4.x
+  - test_idf5.x
+  - test_idf_master
+  - test_windows
+  - test_nuttx
   - coverage
   - sanitizer_tests
   - sanitizer_checks
@@ -10,8 +18,9 @@ stages:
   - pre_release
   - release_stage1
   - release_submit
+  - update_idf_tools
 
-image: $CI_DOCKER_REGISTRY/esp32-toolchain
+image: $CI_DOCKER_REGISTRY/openocd-ci-env:1
 
 variables:
 
@@ -70,6 +79,7 @@ variables:
   variables:
     GIT_STRATEGY: fetch
     GH_REL_TAG: ${CI_COMMIT_TAG}
+    SHA256_FILE: openocd-esp32-${CI_COMMIT_TAG}-checksum.sha256
 
 before_script:
   - set -o errexit; set -o pipefail; set -o nounset
@@ -116,6 +126,16 @@ release_tag_draft:
     - DIST_DIR=dist
     - FILES=$(find ${DIST_DIR} -name dist_name_\* -exec cat {} \+)
     - cd ${DIST_DIR}
+    - ls -l $FILES
+    # Generate checksum file
+    - >
+      for n in $FILES; do
+        sz=$(stat -c%s "${n}") >> ${SHA256_FILE};
+        printf "# %s: %s bytes\n" "${n}" "${sz}" >> ${SHA256_FILE};
+        sha256sum -b "${n}" >> ${SHA256_FILE};
+      done
+    # Append FILES with checksum file
+    - FILES=$(echo -e "${FILES}\n${SHA256_FILE}")
     - ls -l $FILES
     # Upload archives
     - for n in ${FILES}; do hub release edit -m "" -a "${n}" "${GH_REL_TAG}"; done
@@ -172,7 +192,7 @@ upload_to_http:
     - echo "Archive was published there '${OOCD_DISTRO_URL}'"
     - echo "NEW_OOCD_DISTRO_URL=${OOCD_DISTRO_URL}" >> build.env
 
-test_idf_examples:
+test_idf_master_examples:
   stage: pre_release
   when: manual
   only:
@@ -187,7 +207,7 @@ test_idf_examples:
     project: espressif/esp-idf
     strategy: depend
 
-test_premajor_idf_rel_examples:
+test_idf4.x_examples:
   stage: pre_release
   when: manual
   only:
@@ -200,22 +220,46 @@ test_premajor_idf_rel_examples:
       artifacts: true
   trigger:
     project: espressif/esp-idf
-    branch: ${TEST_APP_PREMAJOR_IDF_RELEASE_BRANCH}
+    branch: ${TEST_APP_IDF4_X_RELEASE_BRANCH}
     strategy: depend
 
 create_coverage_reports:
   stage: coverage
-  image: $CI_DOCKER_REGISTRY/rpi-test-env
+  image: $CI_DOCKER_REGISTRY/openocd-ci-env:1
   tags:
-    - arm
+    - build
   allow_failure: true
   artifacts:
     paths:
       - dist/lcov_all_report.tar.gz
+      - cov_infos/metrics.txt
     reports:
       metrics: cov_infos/metrics.txt
     when: always
     expire_in: 1 week
+  needs:
+    - job: tests_armhf_esp32_idf4.x
+    - job: tests_armhf_esp32_idf4.x_flash_encrypted
+    - job: tests_armhf_esp32s2_idf4.x
+    - job: tests_armhf_esp32s2_idf4.x_flash_encrypted
+    - job: tests_armhf_esp32s3_idf4.x
+    - job: tests_armhf_esp32c3_idf4.x
+    - job: tests_armhf_esp32c3_idf4.x_flash_encrypted
+    - job: tests_armhf_esp32_solo_idf4.x
+    - job: tests_armhf_esp32_flash_encrypted
+    - job: tests_armhf_esp32s2
+    - job: tests_armhf_esp32s2_flash_encrypted
+    - job: tests_armhf_esp32s3
+    - job: tests_armhf_esp32c3_builtin_usb_jtag
+    - job: tests_armhf_esp32c3_flash_encrypted
+    - job: tests_armhf_esp32
+    - job: tests_armhf_esp32_solo
+    - job: tests_armhf_esp32c3
+    - job: tests_armhf_esp32c2
+    - job: test_nuttx_esp32
+    - job: test_nuttx_esp32s2
+    - job: test_nuttx_esp32s3
+    - job: test_nuttx_esp32c3
   script:
     - mkdir -p cov_infos
     - mkdir -p dist
@@ -242,6 +286,20 @@ create_coverage_reports:
     - lcov --rc lcov_list_width=150 --list cov_infos/merged.info > cov_infos/metrics_input.txt
     - python3 tools/list_to_metrics.py --file cov_infos/metrics_input.txt
 
+update_idf_tools:
+  stage: update_idf_tools
+  when: manual
+  allow_failure: true
+  <<: *release_tag_filter
+  variables:
+    TOOL_NAME: OpenOCD
+    TOOL_MEMBERS: openocd-esp32
+    TOOL_VERSION: ${GH_REL_TAG}
+    TOOL_SHA256_URL: https://github.com/espressif/openocd-esp32/releases/download/${GH_REL_TAG}/${SHA256_FILE}
+  trigger:
+    project: idf/idf-tools-updater
+    strategy: depend
+
 include:
   - '.gitlab/ci/util.yml'
   - '.gitlab/ci/build.yml'
@@ -249,3 +307,4 @@ include:
   - '.gitlab/ci/test.yml'
   - '.gitlab/ci/test-sanitizers.yml'
   - '.gitlab/ci/pre-check.yml'
+
