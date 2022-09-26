@@ -104,6 +104,9 @@ GTAGS
 #gcov files
 *.gcda
 *.gcno
+
+# checkpatch script files
+.checkpatch-camelcase.*
 .DS_Store
 compile
 .gitignore

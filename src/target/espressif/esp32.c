@@ -313,6 +313,7 @@ static const struct xtensa_config esp32_xtensa_cfg = {
 		.ibreaks_num = 2,
 		.dbreaks_num = 2,
 		.icount_sz = 32,
+		.eps_dbglevel_reg_idx = XT_REG_IDX_EPS6,
 	},
 	.trace = {
 		.enabled = true,
@@ -352,7 +353,7 @@ static inline struct esp32_common *target_to_esp32(struct target *target)
  * 6. restore initial PC and the contents of ESP32_SMP_RTC_DATA_LOW
  * TODO: some state of RTC_CNTL is not reset during SW_SYS_RST. Need to reset that manually. */
 
-const uint8_t esp32_reset_stub_code[] = {
+static const uint8_t esp32_reset_stub_code[] = {
 #include "../../../contrib/loaders/reset/espressif/esp32/cpu_reset_handler_code.inc"
 };
 
@@ -529,6 +530,14 @@ static int esp32_disable_wdts(struct target *target)
 	return ERROR_OK;
 }
 
+static int esp32_on_halt(struct target *target)
+{
+	int ret = esp32_disable_wdts(target);
+	if (ret == ERROR_OK)
+		ret = esp_xtensa_smp_on_halt(target);
+	return ret;
+}
+
 static int esp32_arch_state(struct target *target)
 {
 	return ERROR_OK;
@@ -542,29 +551,6 @@ static int esp32_virt2phys(struct target *target,
 		return ERROR_OK;
 	}
 	return ERROR_FAIL;
-}
-
-static int esp32_handle_target_event(struct target *target, enum target_event event, void *priv)
-{
-	if (target != priv)
-		return ERROR_OK;
-
-	LOG_DEBUG("%d", event);
-
-	int ret = esp_xtensa_smp_handle_target_event(target, event, priv);
-	if (ret != ERROR_OK)
-		return ret;
-
-	switch (event) {
-	case TARGET_EVENT_HALTED:
-		ret = esp32_disable_wdts(target);
-		if (ret != ERROR_OK)
-			return ret;
-		break;
-	default:
-		break;
-	}
-	return ERROR_OK;
 }
 
 /* The TDI pin is also used as a flash Vcc bootstrap pin. If we reset the CPU externally, the last state of the TDI pin
@@ -660,15 +646,7 @@ int esp32_reset_reason_fetch(struct target *target, int *rsn_id, const char **rs
 
 static int esp32_target_init(struct command_context *cmd_ctx, struct target *target)
 {
-	int ret = esp_xtensa_smp_target_init(cmd_ctx, target);
-	if (ret != ERROR_OK)
-		return ret;
-
-	ret = target_register_event_callback(esp32_handle_target_event, target);
-	if (ret != ERROR_OK)
-		return ret;
-
-	return ERROR_OK;
+	return esp_xtensa_smp_target_init(cmd_ctx, target);
 }
 
 static const struct xtensa_debug_ops esp32_dbg_ops = {
@@ -688,7 +666,8 @@ static const struct esp_flash_breakpoint_ops esp32_flash_brp_ops = {
 };
 
 static const struct esp_xtensa_smp_chip_ops esp32_chip_ops = {
-	.reset = esp32_soc_reset
+	.reset = esp32_soc_reset,
+	.on_halt = esp32_on_halt
 };
 
 static const struct esp_semihost_ops esp32_semihost_ops = {
@@ -734,7 +713,7 @@ static int esp32_target_create(struct target *target, Jim_Interp *interp)
 	return ERROR_OK;
 }
 
-COMMAND_HELPER(esp32_cmd_flashbootstrap_do, struct esp32_common *esp32)
+static COMMAND_HELPER(esp32_cmd_flashbootstrap_do, struct esp32_common *esp32)
 {
 	int state = -1;
 

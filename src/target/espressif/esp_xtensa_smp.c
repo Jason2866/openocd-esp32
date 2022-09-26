@@ -116,6 +116,21 @@ int esp_xtensa_smp_soft_reset_halt(struct target *target)
 	return ERROR_OK;
 }
 
+int esp_xtensa_smp_on_halt(struct target *target)
+{
+	struct target_list *head;
+
+	if (!target->smp)
+		return esp_xtensa_on_halt(target);
+
+	foreach_smp_target(head, target->smp_targets) {
+		int res = esp_xtensa_on_halt(head->target);
+		if (res != ERROR_OK)
+			return res;
+	}
+	return ERROR_OK;
+}
+
 static struct target *get_halted_esp_xtensa_smp(struct target *target, int32_t coreid)
 {
 	struct target_list *head;
@@ -143,6 +158,8 @@ int esp_xtensa_smp_poll(struct target *target)
 	if (target->state == TARGET_HALTED && target->smp && target->gdb_service && !target->gdb_service->target) {
 		target->gdb_service->target = get_halted_esp_xtensa_smp(target, target->gdb_service->core[1]);
 		LOG_INFO("Switch GDB target to '%s'", target_name(target->gdb_service->target));
+		if (esp_xtensa_smp->chip_ops->on_halt)
+			esp_xtensa_smp->chip_ops->on_halt(target);
 		target_call_event_callbacks(target, TARGET_EVENT_HALTED);
 		return ERROR_OK;
 	}
@@ -261,6 +278,8 @@ int esp_xtensa_smp_poll(struct target *target)
 				}
 				return ERROR_OK;
 			}
+			if (esp_xtensa_smp->chip_ops->on_halt)
+				esp_xtensa_smp->chip_ops->on_halt(target);
 			target_call_event_callbacks(target, TARGET_EVENT_HALTED);
 		}
 	}
@@ -449,6 +468,7 @@ int esp_xtensa_smp_step(struct target *target,
 {
 	int res;
 	uint32_t smp_break = 0;
+	struct esp_xtensa_smp_common *esp_xtensa_smp = target_to_esp_xtensa_smp(target);
 
 	if (target->smp) {
 		res = esp_xtensa_smp_smpbreak_disable(target, &smp_break);
@@ -456,6 +476,13 @@ int esp_xtensa_smp_step(struct target *target,
 			return res;
 	}
 	res = xtensa_step(target, current, address, handle_breakpoints);
+
+	if (res == ERROR_OK) {
+		if (esp_xtensa_smp->chip_ops->on_halt)
+			esp_xtensa_smp->chip_ops->on_halt(target);
+		target_call_event_callbacks(target, TARGET_EVENT_HALTED);
+	}
+
 	if (target->smp) {
 		int ret = esp_xtensa_smp_smpbreak_restore(target, smp_break);
 		if (ret != ERROR_OK)
@@ -618,20 +645,6 @@ int esp_xtensa_smp_init_arch_info(struct target *target,
 		return ret;
 	esp_xtensa_smp->chip_ops = esp_ops->chip_ops;
 	esp_xtensa_smp->examine_other_cores = ESP_XTENSA_SMP_EXAMINE_OTHER_CORES;
-	return ERROR_OK;
-}
-
-int esp_xtensa_smp_handle_target_event(struct target *target, enum target_event event, void *priv)
-{
-	if (target != priv)
-		return ERROR_OK;
-
-	LOG_DEBUG("%d", event);
-
-	int ret = esp_xtensa_handle_target_event(target, event, priv);
-	if (ret != ERROR_OK)
-		return ret;
-
 	return ERROR_OK;
 }
 
