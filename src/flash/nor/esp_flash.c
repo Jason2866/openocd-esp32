@@ -229,7 +229,7 @@ static int esp_flasher_algorithm_init(struct algorithm_run_data *algo,
 	return ret;
 }
 
-int esp_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
+int esp_algo_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
 	int (*run_func_image)(struct target *target, struct algorithm_run_data *run,
 		uint32_t num_args, ...),
 	bool (*is_irom_address)(target_addr_t addr),
@@ -658,7 +658,7 @@ int esp_flash_apptrace_info_restore(struct target *target,
 	return ERROR_OK;
 }
 
-int esp_flash_write(struct flash_bank *bank, const uint8_t *buffer,
+int esp_algo_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 	uint32_t offset, uint32_t count)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
@@ -844,7 +844,7 @@ static int esp_flash_read_state_init(struct target *target,
 	return ERROR_OK;
 }
 
-int esp_flash_read(struct flash_bank *bank, uint8_t *buffer,
+int esp_algo_flash_read(struct flash_bank *bank, uint8_t *buffer,
 	uint32_t offset, uint32_t count)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;

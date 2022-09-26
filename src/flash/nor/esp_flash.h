@@ -95,7 +95,7 @@ struct esp_flash_breakpoint {
 	struct flash_bank *bank;
 };
 
-int esp_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
+int esp_algo_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
 	int (*run_func_image)(struct target *target, struct algorithm_run_data *run,
 		uint32_t num_args, ...),
 	bool (*is_irom_address)(target_addr_t addr),
@@ -107,9 +107,9 @@ int esp_flash_protect(struct flash_bank *bank, int set, unsigned int first, unsi
 int esp_flash_protect_check(struct flash_bank *bank);
 int esp_flash_blank_check(struct flash_bank *bank);
 int esp_flash_erase(struct flash_bank *bank, unsigned int first, unsigned int last);
-int esp_flash_write(struct flash_bank *bank, const uint8_t *buffer,
+int esp_algo_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 	uint32_t offset, uint32_t count);
-int esp_flash_read(struct flash_bank *bank, uint8_t *buffer,
+int esp_algo_flash_read(struct flash_bank *bank, uint8_t *buffer,
 	uint32_t offset, uint32_t count);
 int esp_flash_probe(struct flash_bank *bank);
 int esp_flash_auto_probe(struct flash_bank *bank);
