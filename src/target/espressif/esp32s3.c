@@ -239,7 +239,8 @@ struct esp32s3_common {
 static int esp32s3_fetch_user_regs(struct target *target);
 static int esp32s3_queue_write_dirty_user_regs(struct target *target);
 
-static const struct xtensa_config esp32s3_xtensa_cfg = {
+static struct xtensa_config esp32s3_xtensa_cfg = {
+	.core_type = XT_LX,
 	.density = true,
 	.aregs_num = XT_AREGS_NUM_MAX,
 	.windowed = true,
@@ -729,7 +730,11 @@ static int esp32s3_target_create(struct target *target, Jim_Interp *interp)
 		.pwr_ops = &esp32s3_pwr_ops,
 		.tap = target->tap,
 		.queue_tdi_idle = NULL,
-		.queue_tdi_idle_arg = NULL
+		.queue_tdi_idle_arg = NULL,
+		.dap = NULL,
+		.debug_ap = NULL,
+		.debug_apsel = DP_APSEL_INVALID,
+		.ap_offset = 0,
 	};
 
 	struct esp32s3_common *esp32s3 = calloc(1, sizeof(struct esp32s3_common));

@@ -185,7 +185,8 @@ static const struct xtensa_user_reg_desc esp32s2_user_regs[ESP32_S2_NUM_REGS - X
 	{ "gpio_out", 0x00, 0, 32, &xtensa_user_reg_u32_type },
 };
 
-static const struct xtensa_config esp32s2_xtensa_cfg = {
+static struct xtensa_config esp32s2_xtensa_cfg = {
+	.core_type = XT_LX,
 	.density = true,
 	.aregs_num = XT_AREGS_NUM_MAX,
 	.windowed = true,
@@ -359,7 +360,7 @@ static int esp32s2_soft_reset_halt(struct target *target)
 	int res = esp32s2_soc_reset(target);
 	if (res != ERROR_OK)
 		return res;
-	return xtensa_assert_reset(target);
+	return xtensa_soft_reset_halt(target);
 }
 
 static int esp32s2_set_peri_reg_mask(struct target *target,
@@ -772,7 +773,11 @@ static int esp32s2_target_create(struct target *target, Jim_Interp *interp)
 		.pwr_ops = &esp32s2_pwr_ops,
 		.tap = target->tap,
 		.queue_tdi_idle = NULL,
-		.queue_tdi_idle_arg = NULL
+		.queue_tdi_idle_arg = NULL,
+		.dap = NULL,
+		.debug_ap = NULL,
+		.debug_apsel = DP_APSEL_INVALID,
+		.ap_offset = 0,
 	};
 
 	/* creates xtensa object */
@@ -819,10 +824,6 @@ static const struct command_registration esp_any_command_handlers[] = {
 
 static const struct command_registration esp32s2_command_handlers[] = {
 	{
-		.name = "xtensa",
-		.mode = COMMAND_ANY,
-		.help = "Xtensa commands group",
-		.usage = "",
 		.chain = xtensa_command_handlers,
 	},
 	{
