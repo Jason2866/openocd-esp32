@@ -6,3 +6,10 @@ export PATH=/opt/homebrew/opt/texinfo/bin:$PATH
 export PATH=/opt/homebrew/opt/capstone/include/capstone:$PATH
 ```
 Do NOT use binutils from homebrew. Uninstall or compile errors will occour!
+
+```
+  ./bootstrap (when building from the git repository)
+  ./configure
+  make
+  make dist 
+```
