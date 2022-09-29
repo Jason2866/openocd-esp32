@@ -11,5 +11,5 @@ Do NOT use binutils from homebrew. Uninstall or compile errors will occour!
   ./bootstrap (when building from the git repository)
   ./configure --prefix=/Users/<user>/OpenOCD
   make
-  make dist
+  make install
 ```
