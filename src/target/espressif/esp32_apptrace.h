@@ -8,7 +8,6 @@
 #ifndef OPENOCD_TARGET_ESP32_APPTRACE_H
 #define OPENOCD_TARGET_ESP32_APPTRACE_H
 
-#include <pthread.h>
 #include <helper/command.h>
 #include <helper/time_support.h>
 #include <target/target.h>
@@ -54,7 +53,7 @@ struct esp_apptrace_host2target_hdr {
 
 struct esp32_apptrace_dest {
 	void *priv;
-	int (*write)(void *priv, uint8_t *data, uint32_t size);
+	int (*write)(void *priv, uint8_t *data, int size);
 	int (*clean)(void *priv);
 	bool log_progress;
 };
@@ -80,19 +79,16 @@ struct esp32_apptrace_cmd_ctx {
 	/* TODO: use subtargets from target arch info */
 	struct target *cpus[ESP32_APPTRACE_MAX_CORES_NUM];
 	/* TODO: use cores num from target */
-	int cores_num;
+	unsigned int cores_num;
 	const struct esp32_apptrace_hw *hw;
 	const struct algorithm_hw *algo_hw;
 	enum target_state target_state;
 	uint32_t last_blk_id;
-	pthread_mutex_t trax_blocks_mux;
 	struct hlist_head free_trace_blocks;
 	struct hlist_head ready_trace_blocks;
 	uint32_t max_trace_block_sz;
-	pthread_t data_processor;
 	struct esp32_apptrace_format trace_format;
-	int (*process_data)(struct esp32_apptrace_cmd_ctx *ctx, int core_id,
-		uint8_t *data, uint32_t data_len);
+	int (*process_data)(struct esp32_apptrace_cmd_ctx *ctx, unsigned int core_id, uint8_t *data, uint32_t data_len);
 	void (*auto_clean)(struct esp32_apptrace_cmd_ctx *ctx);
 	uint32_t tot_len;
 	uint32_t raw_tot_len;
@@ -111,18 +107,14 @@ struct esp32_apptrace_cmd_data {
 	bool wait4halt;
 };
 
-int esp32_apptrace_cmd_ctx_init(struct target *target,
-	struct esp32_apptrace_cmd_ctx *cmd_ctx,
-	int mode);
+int esp32_apptrace_cmd_ctx_init(struct target *target, struct esp32_apptrace_cmd_ctx *cmd_ctx, int mode);
 int esp32_apptrace_cmd_ctx_cleanup(struct esp32_apptrace_cmd_ctx *cmd_ctx);
 void esp32_apptrace_cmd_args_parse(struct esp32_apptrace_cmd_ctx *cmd_ctx,
 	struct esp32_apptrace_cmd_data *cmd_data,
 	const char **argv,
 	int argc);
-int esp32_apptrace_dest_init(struct esp32_apptrace_dest dest[],
-	const char *dest_paths[],
-	int max_dests);
-int esp32_apptrace_dest_cleanup(struct esp32_apptrace_dest dest[], int max_dests);
+int esp32_apptrace_dest_init(struct esp32_apptrace_dest dest[], const char *dest_paths[], unsigned int max_dests);
+int esp32_apptrace_dest_cleanup(struct esp32_apptrace_dest dest[], unsigned int max_dests);
 int esp_apptrace_usr_block_write(const struct esp32_apptrace_hw *hw, struct target *target,
 	uint32_t block_id,
 	const uint8_t *data,
