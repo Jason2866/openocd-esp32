@@ -120,3 +120,6 @@ mdate-sh
 ltmain.sh
 missing
 texinfo.tex
+
+# Reduced tcl files
+tcl-lite/*
