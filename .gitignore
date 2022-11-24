@@ -107,6 +107,19 @@ GTAGS
 
 # checkpatch script files
 .checkpatch-camelcase.*
+.DS_Store
+compile
+.gitignore
+config.guess
+config.sub
+depcomp
+install-sh
+.gitignore
+mdate-sh
+.gitignore
+ltmain.sh
+missing
+texinfo.tex
 
 # Reduced tcl files
 tcl-lite/*
