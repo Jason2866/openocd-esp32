@@ -303,7 +303,7 @@ int esp_algo_flash_blank_check(struct flash_bank *bank)
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to check erase flash (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to check erase flash (%" PRId32 ")!", run.ret_code);
 		ret = ERROR_FAIL;
 	} else {
 		for (unsigned int i = 0; i < bank->num_sectors; i++)
@@ -374,10 +374,14 @@ static int esp_algo_flash_get_mappings(struct flash_bank *bank,
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to get flash maps (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to get flash maps (%" PRId32 ")!", run.ret_code);
 		if (run.ret_code == ESP_STUB_ERR_INVALID_IMAGE)
 			LOG_WARNING(
 				"Application image is invalid! Check configured binary flash offset 'appimage_offset'.");
+		else if (run.ret_code == ESP_STUB_ERR_INVALID_PARTITION)
+			LOG_WARNING("Invalid partition! One of the partition size exceeds the flash chip size!");
+		else if (run.ret_code == ESP_STUB_ERR_INVALID_APP_MAGIC)
+			LOG_WARNING("Invalid magic number in app image!");
 		ret = ERROR_FAIL;
 	} else {
 		memcpy(flash_map, mp.value, sizeof(struct esp_flash_mapping));
@@ -440,7 +444,7 @@ int esp_algo_flash_erase(struct flash_bank *bank, unsigned int first, unsigned i
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to erase flash (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to erase flash (%" PRId32 ")!", run.ret_code);
 		ret = ERROR_FAIL;
 	} else {
 		duration_measure(&bench);
@@ -744,6 +748,9 @@ int esp_algo_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 	wr_state.stub_wargs.start_addr = esp_info->hw_flash_base + offset;
 	wr_state.stub_wargs.down_buf_addr = 0;
 	wr_state.stub_wargs.down_buf_size = 0;
+	wr_state.stub_wargs.options = ESP_STUB_FLASH_WR_RAW;
+	if (esp_info->encryption_needed_on_chip)
+		wr_state.stub_wargs.options |= ESP_STUB_FLASH_ENCRYPT_BINARY;
 
 	struct duration wr_time;
 	duration_start(&wr_time);
@@ -765,7 +772,7 @@ int esp_algo_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to write flash (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to write flash (%" PRId32 ")!", run.ret_code);
 		ret = ERROR_FAIL;
 	} else {
 		duration_measure(&wr_time);
@@ -914,7 +921,7 @@ int esp_algo_flash_read(struct flash_bank *bank, uint8_t *buffer,
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to read flash (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to read flash (%" PRId32 ")!", run.ret_code);
 		ret = ERROR_FAIL;
 	}
 	return ret;
@@ -1119,7 +1126,7 @@ int esp_algo_flash_breakpoint_add(struct target *target,
 		return ret;
 	}
 	if (run.ret_code == 0) {
-		LOG_ERROR("%s: Failed to set bp (%" PRId64 ")!", target_name(target), run.ret_code);
+		LOG_ERROR("%s: Failed to set bp (%" PRId32 ")!", target_name(target), run.ret_code);
 		destroy_mem_param(&mp);
 		sw_bp->oocd_bp = NULL;
 		return ERROR_FAIL;
@@ -1193,7 +1200,7 @@ int esp_algo_flash_breakpoint_remove(struct target *target,
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to clear bp (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to clear bp (%" PRId32 ")!", run.ret_code);
 		return ERROR_FAIL;
 	}
 
@@ -1248,7 +1255,7 @@ static int esp_algo_flash_calc_hash(struct flash_bank *bank, uint8_t *hash,
 		return ret;
 	}
 	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to get hash value (%" PRId64 ")!", run.ret_code);
+		LOG_ERROR("Failed to get hash value (%" PRId32 ")!", run.ret_code);
 		ret = ERROR_FAIL;
 	} else {
 		memcpy(hash, mp.value, 32);
@@ -1419,6 +1426,39 @@ COMMAND_HELPER(esp_algo_flash_cmd_set_compression, struct target *target)
 COMMAND_HANDLER(esp_algo_flash_cmd_compression)
 {
 	return CALL_COMMAND_HANDLER(esp_algo_flash_cmd_set_compression,
+		get_current_target(CMD_CTX));
+}
+
+static int esp_algo_flash_set_encryption(struct target *target,
+	char *bank_name_suffix,
+	int encryption)
+{
+	struct flash_bank *bank;
+	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, true);
+	if (retval != ERROR_OK)
+		return ERROR_FAIL;
+
+	struct esp_flash_bank *esp_info = (struct esp_flash_bank *)bank->driver_priv;
+	esp_info->encryption_needed_on_chip = encryption;
+	return ERROR_OK;
+}
+
+COMMAND_HELPER(esp_algo_flash_cmd_set_encryption, struct target *target)
+{
+	if (CMD_ARGC != 1) {
+		command_print(CMD, "Encryption not specified!");
+		return ERROR_FAIL;
+	}
+
+	bool encryption = false;
+	COMMAND_PARSE_ON_OFF(CMD_ARGV[0], encryption);
+
+	return esp_algo_flash_set_encryption(target, "flash", encryption);
+}
+
+COMMAND_HANDLER(esp_algo_flash_cmd_encryption)
+{
+	return CALL_COMMAND_HANDLER(esp_algo_flash_cmd_set_encryption,
 		get_current_target(CMD_CTX));
 }
 
@@ -1599,6 +1639,14 @@ const struct command_registration esp_flash_exec_flash_command_handlers[] = {
 		.help =
 			"Set cpu clock freq to the max level. Use 'off' to restore the clock speed",
 		.usage = "['on'|'off']",
+	},
+	{
+		.name = "encrypt_binary",
+		.handler = esp_algo_flash_cmd_encryption,
+		.mode = COMMAND_ANY,
+		.help =
+			"Set if binary encryption needs to be handled on chip before writing to flash",
+		.usage = "['yes'|'no']",
 	},
 	COMMAND_REGISTRATION_DONE
 };
