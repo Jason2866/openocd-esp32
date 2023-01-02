@@ -54,6 +54,8 @@ struct esp_flasher_stub_config {
 	uint32_t first_user_reg_param;
 	target_addr_t apptrace_ctrl_addr;
 	uint32_t stack_data_pool_sz;
+	target_addr_t log_buff_addr;
+	uint32_t log_buff_size;	/* current_log_len + len(buff) */
 };
 
 /* ESP flash data.
@@ -86,6 +88,8 @@ struct esp_flash_bank {
 	int old_cpu_freq;
 	/* Inform stub flasher if encryption requires before writing to flash.  */
 	int encryption_needed_on_chip;
+	/* Enable/disable stub log*/
+	bool stub_log_enabled;
 };
 
 struct esp_flash_breakpoint {
@@ -128,5 +132,6 @@ COMMAND_HELPER(esp_algo_flash_cmd_set_compression, struct target *target);
 COMMAND_HELPER(esp_algo_flash_cmd_set_encryption, struct target *target);
 COMMAND_HELPER(esp_algo_flash_parse_cmd_verify_bank_hash, struct target *target);
 COMMAND_HELPER(esp_algo_flash_parse_cmd_clock_boost, struct target *target);
+COMMAND_HELPER(esp_algo_flash_parse_cmd_stub_log, struct target *target);
 
 #endif	/* OPENOCD_FLASH_NOR_ESP_FLASH_H */

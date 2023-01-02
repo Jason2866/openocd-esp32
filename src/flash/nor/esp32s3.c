@@ -16,6 +16,7 @@
 #include <target/espressif/esp_xtensa_smp.h>
 #include "esp_xtensa.h"
 #include "contrib/loaders/flash/esp/esp32s3/stub_flasher_image.h"
+#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_image_wlog.h"
 
 #define ESP32_S3_DROM_LOW             0x3C000000
 #define ESP32_S3_DROM_HIGH            0x3D000000
@@ -34,8 +35,14 @@ static const uint8_t esp32s3_flasher_stub_code[] = {
 static const uint8_t esp32s3_flasher_stub_data[] = {
 #include "contrib/loaders/flash/esp/esp32s3/stub_flasher_data.inc"
 };
+static const uint8_t esp32s3_flasher_stub_code_wlog[] = {
+#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_code_wlog.inc"
+};
+static const uint8_t esp32s3_flasher_stub_data_wlog[] = {
+#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_data_wlog.inc"
+};
 
-static const struct esp_flasher_stub_config s_stub_cfg = {
+static const struct esp_flasher_stub_config s_esp32s3_stub_cfg = {
 	.code = esp32s3_flasher_stub_code,
 	.code_sz = sizeof(esp32s3_flasher_stub_code),
 	.data = esp32s3_flasher_stub_data,
@@ -43,6 +50,18 @@ static const struct esp_flasher_stub_config s_stub_cfg = {
 	.entry_addr = ESP32S3_STUB_ENTRY_ADDR,
 	.bss_sz = ESP32S3_STUB_BSS_SIZE,
 	.first_user_reg_param = XTENSA_STUB_ARGS_FUNC_START
+};
+
+static const struct esp_flasher_stub_config s_esp32s3_stub_cfg_wlog = {
+	.code = esp32s3_flasher_stub_code_wlog,
+	.code_sz = sizeof(esp32s3_flasher_stub_code_wlog),
+	.data = esp32s3_flasher_stub_data_wlog,
+	.data_sz = sizeof(esp32s3_flasher_stub_data_wlog),
+	.entry_addr = ESP32S3_STUB_WLOG_ENTRY_ADDR,
+	.bss_sz = ESP32S3_STUB_WLOG_BSS_SIZE,
+	.first_user_reg_param = XTENSA_STUB_ARGS_FUNC_START,
+	.log_buff_addr = ESP32S3_STUB_WLOG_LOG_ADDR,
+	.log_buff_size = ESP32S3_STUB_WLOG_LOG_SIZE
 };
 
 static bool esp32s3_is_irom_address(target_addr_t addr)
@@ -57,7 +76,10 @@ static bool esp32s3_is_drom_address(target_addr_t addr)
 
 static const struct esp_flasher_stub_config *esp32s3_get_stub(struct flash_bank *bank)
 {
-	return &s_stub_cfg;
+	struct esp_flash_bank *esp_info = bank->driver_priv;
+	if (esp_info->stub_log_enabled)
+		return &s_esp32s3_stub_cfg_wlog;
+	return &s_esp32s3_stub_cfg;
 }
 
 /* flash bank <bank_name> esp32s3 <base> <size> 0 0 <target#>
@@ -149,6 +171,24 @@ COMMAND_HANDLER(esp32s3_cmd_encryption)
 	return CALL_COMMAND_HANDLER(esp_algo_flash_cmd_set_encryption, target);
 }
 
+COMMAND_HANDLER(esp32s3_cmd_stub_log)
+{
+	struct target *target = get_current_target(CMD_CTX);
+
+	if (target->smp) {
+		struct target_list *head;
+		struct target *curr;
+		foreach_smp_target(head, target->smp_targets) {
+			curr = head->target;
+			int ret = CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_stub_log, curr);
+			if (ret != ERROR_OK)
+				return ret;
+		}
+		return ERROR_OK;
+	}
+	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_stub_log, target);
+}
+
 COMMAND_HANDLER(esp32s3_cmd_verify_bank_hash)
 {
 	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_verify_bank_hash,
@@ -202,6 +242,13 @@ const struct command_registration esp32s3_flash_command_handlers[] = {
 		.help =
 			"Set if binary encryption needs to be handled on chip before writing to flash",
 		.usage = "['yes'|'no']",
+	},
+	{
+		.name = "stub_log",
+		.handler = esp32s3_cmd_stub_log,
+		.mode = COMMAND_ANY,
+		.help = "Enable stub flasher logs",
+		.usage = "['on'|'off']",
 	},
 	COMMAND_REGISTRATION_DONE
 };
