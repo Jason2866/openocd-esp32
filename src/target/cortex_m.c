@@ -879,16 +879,6 @@ static int cortex_m_poll(struct target *target)
 	struct cortex_m_common *cortex_m = target_to_cm(target);
 	struct armv7m_common *armv7m = &cortex_m->armv7m;
 
-	/* Check if debug_ap is available to prevent segmentation fault.
-	 * If the re-examination after an error does not find a MEM-AP
-	 * (e.g. the target stopped communicating), debug_ap pointer
-	 * can suddenly become NULL.
-	 */
-	if (!armv7m->debug_ap) {
-		target->state = TARGET_UNKNOWN;
-		return ERROR_TARGET_NOT_EXAMINED;
-	}
-
 	/* Read from Debug Halting Control and Status Register */
 	retval = cortex_m_read_dhcsr_atomic_sticky(target);
 	if (retval != ERROR_OK) {
@@ -2280,6 +2270,22 @@ static void cortex_m_dwt_free(struct target *target)
 	cm->dwt_cache = NULL;
 }
 
+static bool cortex_m_has_tz(struct target *target)
+{
+	struct armv7m_common *armv7m = target_to_armv7m(target);
+	uint32_t dauthstatus;
+
+	if (armv7m->arm.arch != ARM_ARCH_V8M)
+		return false;
+
+	int retval = target_read_u32(target, DAUTHSTATUS, &dauthstatus);
+	if (retval != ERROR_OK) {
+		LOG_WARNING("Error reading DAUTHSTATUS register");
+		return false;
+	}
+	return (dauthstatus & DAUTHSTATUS_SID_MASK) != 0;
+}
+
 #define MVFR0 0xe000ef40
 #define MVFR1 0xe000ef44
 
@@ -2311,23 +2317,20 @@ int cortex_m_examine(struct target *target)
 	/* hla_target shares the examine handler but does not support
 	 * all its calls */
 	if (!armv7m->is_hla_target) {
-		if (armv7m->debug_ap) {
-			dap_put_ap(armv7m->debug_ap);
-			armv7m->debug_ap = NULL;
-		}
-
-		if (cortex_m->apsel == DP_APSEL_INVALID) {
-			/* Search for the MEM-AP */
-			retval = cortex_m_find_mem_ap(swjdp, &armv7m->debug_ap);
-			if (retval != ERROR_OK) {
-				LOG_TARGET_ERROR(target, "Could not find MEM-AP to control the core");
-				return retval;
-			}
-		} else {
-			armv7m->debug_ap = dap_get_ap(swjdp, cortex_m->apsel);
-			if (!armv7m->debug_ap) {
-				LOG_ERROR("Cannot get AP");
-				return ERROR_FAIL;
+		if (!armv7m->debug_ap) {
+			if (cortex_m->apsel == DP_APSEL_INVALID) {
+				/* Search for the MEM-AP */
+				retval = cortex_m_find_mem_ap(swjdp, &armv7m->debug_ap);
+				if (retval != ERROR_OK) {
+					LOG_TARGET_ERROR(target, "Could not find MEM-AP to control the core");
+					return retval;
+				}
+			} else {
+				armv7m->debug_ap = dap_get_ap(swjdp, cortex_m->apsel);
+				if (!armv7m->debug_ap) {
+					LOG_ERROR("Cannot get AP");
+					return ERROR_FAIL;
+				}
 			}
 		}
 
@@ -2411,7 +2414,7 @@ int cortex_m_examine(struct target *target)
 			for (size_t idx = ARMV7M_FPU_FIRST_REG; idx <= ARMV7M_FPU_LAST_REG; idx++)
 				armv7m->arm.core_cache->reg_list[idx].exist = false;
 
-		if (armv7m->arm.arch != ARM_ARCH_V8M)
+		if (!cortex_m_has_tz(target))
 			for (size_t idx = ARMV8M_FIRST_REG; idx <= ARMV8M_LAST_REG; idx++)
 				armv7m->arm.core_cache->reg_list[idx].exist = false;
 
