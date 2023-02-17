@@ -316,7 +316,7 @@ int stub_apptrace_prepare()
 int64_t esp_timer_get_time(void)
 {
 	/* this function is used by apptrace code to implement timeouts.
-	   unfortunately esp32c3 does not support CPU cycle counter, so we have two options:
+	   unfortunately esp32c6 does not support CPU cycle counter, so we have two options:
 	   1) Use some HW timer. It can be hard, because we need to ensure that it is initialized and possibly restore its state.
 	   2) Emulate timer by incrementing some var on every call.
 	          Stub flasher uses ESP_APPTRACE_TMO_INFINITE only, so this function won't be called by apptrace at all. */
@@ -326,7 +326,7 @@ int64_t esp_timer_get_time(void)
 uint64_t stub_get_time(void)
 {
 	/* this function is used for perf measurements only.
-	   unfortunately esp32c3 does not support CPU cycle counter and usage of HW timer is problematic */
+	   unfortunately esp32c6 does not support CPU cycle counter and usage of HW timer is problematic */
 	return 0;
 }
 

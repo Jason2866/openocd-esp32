@@ -159,6 +159,23 @@ static const struct freertos_params freertos_params_list[] = {
 		rtos_freertos_riscv_pick_stacking_info,	/* fn to pick stacking_info */
 	},
 	{
+		"esp32h2",				/* target_name */
+		4,						/* thread_count_width; */
+		4,						/* pointer_width; */
+		16,						/* list_next_offset; */
+		8,						/* list_end_offset; */
+		20,						/* list_width; */
+		8,						/* list_elem_next_offset; */
+		12,						/* list_elem_content_offset */
+		0,						/* thread_stack_offset; */
+		52,						/* thread_name_offset; */
+		4,						/* thread_counter_width */
+		NULL,					/* stacking_info */
+		NULL,
+		NULL,
+		rtos_freertos_riscv_pick_stacking_info,	/* fn to pick stacking_info */
+	},
+	{
 		"esp32c3",				/* target_name */
 		4,						/* thread_count_width; */
 		4,						/* pointer_width; */
@@ -222,7 +239,7 @@ static int freertos_post_reset_cleanup(struct target *target);
 static int freertos_clean(struct target *target);
 static int freertos_smp_init(struct target *target);
 
-struct rtos_type freertos_rtos = {
+const struct rtos_type freertos_rtos = {
 	.name = "FreeRTOS",
 	.detect_rtos = freertos_detect_rtos,
 	.create = freertos_create,
@@ -881,8 +898,9 @@ static int freertos_update_threads(struct rtos *rtos)
 
 	uint8_t top_used_priority = freertos_get_ux_top_used_priority(rtos);
 	if (top_used_priority == 0) {
-		LOG_ERROR(
-			"FreeRTOS: uxTopUsedPriority is not defined, consult the OpenOCD manual for a work-around!");
+		LOG_DEBUG(
+			"FreeRTOS: uxTopUsedPriority may not defined or not loaded into memory yet."
+			"Try to read in the next update request");
 		return ERROR_FAIL;
 	}
 
