@@ -26,10 +26,14 @@ noinst_LTLIBRARIES =
 info_TEXINFOS =
 dist_man_MANS =
 EXTRA_DIST =
+DISTCLEANFILES =
 
 if INTERNAL_JIMTCL
 SUBDIRS += jimtcl
 DIST_SUBDIRS += jimtcl
+EXTRA_DIST += jimtcl/configure.gnu
+# jimtcl from 0.79 to 0.82 miss cleaning jsmn.o
+DISTCLEANFILES += jimtcl/jsmn/jsmn.o
 endif
 
 # common flags used in openocd build
@@ -117,7 +121,11 @@ dist-hook:
 		$(INSTALL_DATA) $(srcdir)/$(TCL_PATH)/$$i $$j; \
 	done
 
+ESP_VERSION_CFG = $(srcdir)/$(TCL_PATH)/target/esp_version.cfg
+VER:=$(VERSION)$(shell $(srcdir)/guess-rev.sh | grep -o "^[^-]*-\?[^-]*-\?[^-]*")
 install-data-hook:
+	@printf "# SPDX-License-Identifier: GPL-2.0-or-later\n\n" > $(ESP_VERSION_CFG)
+	@echo "set EXPECTED_VER \"$(VER)\"" >> $(ESP_VERSION_CFG)
 	for i in $$($(TCL_FILES)); do \
 		j="$(DESTDIR)$(pkgdatadir)/scripts/$$i" && \
 		mkdir -p "$$(dirname $$j)" && \
@@ -129,9 +137,9 @@ uninstall-hook:
 
 distclean-local:
 	rm -rf Doxyfile doxygen
-	rm -f $(srcdir)/jimtcl/configure.gnu
+	-rm -f $(srcdir)/jimtcl/configure.gnu
 
-DISTCLEANFILES = doxygen.log
+DISTCLEANFILES += doxygen.log
 
 METASOURCES = AUTO
 

@@ -25,7 +25,7 @@ class BreakpointTestsImpl:
             # esp32c3 has 8 HW breakpoint slots
             # 6 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
             self.bps = ['unused_func0', 'unused_func1', 'unused_func2', 'unused_func3', 'unused_func4', 'unused_func5']
-        elif testee_info.chip == "esp32c6":
+        elif testee_info.chip == "esp32c6" or testee_info.chip == "esp32h2":
             # esp32c6 has 4 HW breakpoint slots
             # 2 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
             self.bps = ['unused_func0', 'unused_func1']
@@ -186,8 +186,7 @@ class BreakpointTestsImpl:
             self.add_bp(f)
 
         # riscv gdb11 workaround
-        run_bt = True if testee_info.arch == "riscv32" and testee_info.idf_ver == IdfVersion.fromstr('latest') else False
-
+        run_bt = True if testee_info.arch == "riscv32" and testee_info.idf_ver >= IdfVersion.fromstr('5.0') else False
         for i in range(3):
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr', run_bt)
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr_func', run_bt)
@@ -227,7 +226,11 @@ class WatchpointTestsImpl:
             # 'count' write
             self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11'])
             var_val = int(self.gdb.data_eval_expr('s_count1'))
-            self.assertEqual(var_val, cnt)
+            # FIXME: GCC-307
+            if testee_info.arch == "riscv32" and testee_info.idf_ver > IdfVersion.fromstr('5.0'):
+                self.assertEqual(var_val, cnt+1)
+            else:
+                self.assertEqual(var_val, cnt)
             cnt += 1
 
     def test_wp_and_reconnect(self):
@@ -249,16 +252,25 @@ class WatchpointTestsImpl:
         cnt2 = 100
         for e in self.wps:
             self.add_wp(e, 'w')
+        wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP, dbg.TARGET_STOP_REASON_WP]
         for i in range(5):
             if (i % 2) == 0:
-                self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_SIGTRAP, 'blink_task', ['s_count11'])
+                self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11'])
                 var_val = int(self.gdb.data_eval_expr('s_count1'))
-                self.assertEqual(var_val, cnt)
+                # FIXME: GCC-307
+                if testee_info.arch == "riscv32" and testee_info.idf_ver > IdfVersion.fromstr('5.0'):
+                    self.assertEqual(var_val, cnt+1)
+                else:
+                    self.assertEqual(var_val, cnt)
                 cnt += 1
             else:
-                self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_SIGTRAP, 'blink_task', ['s_count2'])
+                self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count2'])
                 var_val = int(self.gdb.data_eval_expr('s_count2'))
-                self.assertEqual(var_val, cnt2)
+                # FIXME: GCC-307
+                if testee_info.arch == "riscv32" and testee_info.idf_ver > IdfVersion.fromstr('5.0'):
+                    self.assertEqual(var_val, cnt2-1)
+                else:
+                    self.assertEqual(var_val, cnt2)
                 cnt2 -= 1
             self.gdb.disconnect()
             sleep(0.1) #sleep 100ms

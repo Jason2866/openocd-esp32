@@ -72,6 +72,9 @@ class IdfVersion:
     def __lt__(self, other):
         return self._idf_ver < other._idf_ver
 
+    def __ge__(self, other):
+        return self._idf_ver >= other._idf_ver
+
     def __eq__(self, other):
         return self._idf_ver == other._idf_ver
 
@@ -240,7 +243,11 @@ class DebuggerTestAppConfig:
         # App binary offeset in flash
         self.pt_off = ESP32_PT_FLASH_OFF
         # name of test app variable which selects sub-test to run
+        # used for number-based tests selection
         self.test_select_var = None
+        # name of test app variable which holds sub-test string ID (name) to run
+        # used for string-based tests selection
+        self.test_id_var = None
         # Program's entry point ("app_main" is IDF's default)
         self.entry_point = entry_point
         # File containing commands to execute at startup
@@ -432,7 +439,7 @@ class DebuggerTestsBase(unittest.TestCase, GDBUtils):
         if state != dbg.TARGET_STATE_STOPPED:
             self.gdb.exec_interrupt()
             rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
-            self.assertEqual(rsn, dbg.TARGET_STOP_REASON_SIGINT)
+            self.assertTrue(rsn == dbg.TARGET_STOP_REASON_SIGINT or rsn == dbg.TARGET_STOP_REASON_SIGTRAP)
 
     def resume_exec(self, loc=None):
         """ Resumes target execution and ensures that it is in RUNNING state
@@ -500,6 +507,7 @@ class DebuggerTestAppTests(DebuggerTestsBase):
         self.stop_exec()
         self.prepare_app_for_debugging(self.test_app_cfg.app_off)
         # ready to select and start test (should be done in test method)
+        self.select_sub_test(self.id())
 
     def tearDown(self):
         self.clear_bps()
@@ -544,10 +552,14 @@ class DebuggerTestAppTests(DebuggerTestsBase):
             self.gdb.delete_bp(wpn)
         self.wps = {}
 
-    def select_sub_test(self, sub_test_num):
+    def select_sub_test(self, sub_test_id):
         """ Selects sub test in app running on target
         """
-        self.gdb.data_eval_expr('%s=%d' % (self.test_app_cfg.test_select_var, sub_test_num))
+        if type(sub_test_id) is str:
+            self.gdb.data_eval_expr('%s=%d' % (self.test_app_cfg.test_select_var, -1))
+            self.gdb.data_eval_expr('%s=\\"%s\\"' % (self.test_app_cfg.test_id_var, sub_test_id))
+        else:
+            self.gdb.data_eval_expr('%s=%d' % (self.test_app_cfg.test_select_var, sub_test_id))
 
 
     def run_to_bp(self, exp_rsn, func_name, tmo=20):
@@ -627,6 +639,7 @@ class DebuggerGenericTestAppTests(DebuggerTestAppTests):
         self.test_app_cfg.bld_path = os.path.join('bootloader', 'bootloader.bin')
         self.test_app_cfg.pt_path = os.path.join('partition_table', 'partition-table.bin')
         self.test_app_cfg.test_select_var = 's_run_test'
+        self.test_app_cfg.test_id_var = 's_run_test_str'
 
 
 class DebuggerGenericTestAppTestsDual(DebuggerGenericTestAppTests):

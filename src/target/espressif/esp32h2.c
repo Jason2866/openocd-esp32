@@ -74,7 +74,8 @@ enum esp32h2_reset_reason {
 	ESP32H2_EFUSE_RESET             = 0x14,	/* Efuse reset digital core */
 	ESP32H2_USB_UART_CHIP_RESET     = 0x15,	/* USB UART resets the digital core */
 	ESP32H2_USB_JTAG_CHIP_RESET     = 0x16,	/* USB JTAG resets the digital core */
-	ESP32H2_POWER_GLITCH_RESET      = 0x18,	/* Power glitch reset digital core and rtc module */
+	ESP32H2_POWER_GLITCH_RESET      = 0x17,	/* Power glitch reset digital core and rtc module */
+	ESP32H2_JTAG_CPU_RESET          = 0x18,	/* Jtag reset CPU*/
 };
 
 static const char *esp32h2_get_reset_reason(enum esp32h2_reset_reason reset_number)
@@ -119,6 +120,8 @@ static const char *esp32h2_get_reset_reason(enum esp32h2_reset_reason reset_numb
 		return "USB (JTAG) core reset";
 	case ESP32H2_POWER_GLITCH_RESET:
 		return "Power glitch reset digital core and rtc module";
+	case ESP32H2_JTAG_CPU_RESET:
+		return "JTAG CPU reset";
 	}
 	return "Unknown reset cause";
 }
@@ -322,6 +325,10 @@ static int esp32h2_poll(struct target *target)
 				if (res != ERROR_OK)
 					LOG_WARNING("Failed to do rtos-specific cleanup (%d)", res);
 			}
+			/* clear previous apptrace ctrl_addr to avoid invalid tracing control block usage in the long
+			 * run */
+			esp32h2->esp_riscv.apptrace.ctrl_addr = 0;
+
 			if (ESP32H2_IS_FLASH_BOOT(strap_reg)) {
 				/* enable ebreaks */
 				res = esp_riscv_core_ebreaks_enable(target);
