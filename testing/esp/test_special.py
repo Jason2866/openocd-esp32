@@ -20,7 +20,6 @@ class DebuggerSpecialTestsImpl:
     """
 
     @idf_ver_min_for_arch('latest', ['riscv32'])
-    @skip_for_chip(['esp32c2'])
     def test_restart_debug_from_crash(self):
         """
             This test checks that debugger can operate correctly after SW reset with stalled CPU.
@@ -79,15 +78,15 @@ class DebuggerSpecialTestsImpl:
         self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func1', 'target_wp_var1_1')
         # watchpoint hit on read var in 'target_bp_func1'
         self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func1', 'target_wp_var1_2')
-        # breakpoint at 'target_bp_func2' entry
-        self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_bp_func2')
-        # watchpoint hit on write var in 'target_bp_func2'
-        self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_1')
-        # watchpoint hit on read var in 'target_bp_func2'
-        self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_2')
+        # esp32c2 has only 2 hw triggers
+        if testee_info.chip != "esp32c2":
+            # breakpoint at 'target_bp_func2' entry
+            self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_bp_func2')
+            # watchpoint hit on write var in 'target_bp_func2'
+            self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_1')
+            # watchpoint hit on read var in 'target_bp_func2'
+            self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_2')
 
-    # FIXME: OCD-607. Should work in all RISCV chips
-    @skip_for_arch(['riscv32'])
     def test_bp_and_wp_set_by_program(self):
         """
             This test checks that breakpoints and watchpoints set by program on target work.
@@ -97,16 +96,13 @@ class DebuggerSpecialTestsImpl:
         self.select_sub_test(803)
         self._do_test_bp_and_wp_set_by_program()
 
-    # FIXME: OCD-724 Should work in all RISCV chips
-    # @skip_for_arch(['riscv32'])
-    @unittest.skip('enable only for riscv after fix')
     def test_wp_reconfigure_by_program(self):
         """
             This test checks that watchpoints can be reconfigured by target w/o removing them.
             1) Select appropriate sub-test number on target.
             2) Resume target, wait for the program to hit breakpoints.
         """
-        self.select_sub_test(804)
+        self.select_sub_test(808)
         self._do_test_bp_and_wp_set_by_program()
 
     @only_for_arch(['xtensa'])
@@ -140,7 +136,7 @@ class DebuggerSpecialTestsImpl:
                 self.gdb.stream_handler_remove('target', _target_stream_handler)
             self.assertTrue(expected_strings[i] in target_output)
             self.gdb.target_reset()
-            self.gdb.add_bp('app_main')
+            self.add_bp('app_main')
             self.run_to_bp(dbg.TARGET_STOP_REASON_BP, 'app_main')
 
     def test_stub_logs(self):

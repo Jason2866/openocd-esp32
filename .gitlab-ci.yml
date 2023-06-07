@@ -1,6 +1,6 @@
 stages:
   - pre_check
-  - scan_build
+  - static_analyzers
   - build_openocd
   - build_idf4.x
   - build_idf5.x
@@ -9,7 +9,7 @@ stages:
   - test_idf4.x
   - test_idf5.x
   - test_idf_master
-  - test_windows
+  - test_host
   - test_nuttx
   - coverage
   - sanitizer_tests
@@ -253,7 +253,6 @@ test_idf4.x_examples:
 
 create_coverage_reports:
   stage: coverage
-  image: $CI_DOCKER_REGISTRY/openocd-ci-env:1
   tags:
     - build
   allow_failure: true

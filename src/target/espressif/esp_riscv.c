@@ -75,7 +75,6 @@ enum esp_riscv_exception_cause {
 		} \
 	} while (0)
 
-extern struct target_type riscv_target;
 static int esp_riscv_debug_stubs_info_init(struct target *target,
 	target_addr_t ctrl_addr);
 
@@ -135,6 +134,46 @@ static void esp_riscv_print_exception_reason(struct target *target)
 		LOG_TARGET_INFO(target, "Halt cause (%d) - (%s)", (int)ESP_RISCV_EXCEPTION_CAUSE(mcause),
 			esp_riscv_get_exception_reason(mcause));
 	}
+}
+
+static bool esp_riscv_is_wp_set_by_program(struct target *target)
+{
+	RISCV_INFO(r);
+
+	for (struct watchpoint *wp = target->watchpoints; wp; wp = wp->next) {
+		if (wp->unique_id == (int)r->trigger_hit) {
+			struct esp_riscv_common *esp_riscv = target_to_esp_riscv(target);
+			/* check if wp set via semihosting call by target application */
+			for (unsigned int id = 0; id < esp_riscv->max_wp_num; ++id) {
+				if (esp_riscv->target_wp_addr[id] == wp->address) {
+					LOG_TARGET_DEBUG(target, "wp[%d] set by program", id);
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+static bool esp_riscv_is_bp_set_by_program(struct target *target)
+{
+	RISCV_INFO(r);
+
+	for (struct breakpoint *bp = target->breakpoints; bp; bp = bp->next) {
+		if (bp->unique_id == r->trigger_hit) {
+			struct esp_riscv_common *esp_riscv = target_to_esp_riscv(target);
+			/* check if bp set via semihosting call by target application */
+			for (unsigned int id = 0; id < esp_riscv->max_bp_num; ++id) {
+				if (esp_riscv->target_bp_addr[id] == bp->address) {
+					LOG_TARGET_DEBUG(target, "bp[%d] set by program", id);
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
 }
 
 int esp_riscv_alloc_trigger_addr(struct target *target)
@@ -346,6 +385,16 @@ int esp_riscv_breakpoint_remove(struct target *target, struct breakpoint *breakp
 {
 	struct esp_riscv_common *esp_riscv = target_to_esp_riscv(target);
 
+	enum target_state prev_state = target->state;
+
+	/* TODO: Workaround solution for OCD-749. Remove below lines after it is done */
+	if (target->state != TARGET_HALTED) {
+		LOG_TARGET_DEBUG(target, "Target must be in halted state. Try to halt it");
+		if (esp_riscv_core_halt(target) != ERROR_OK)
+			return ERROR_FAIL;
+	}
+	/**************************************************/
+
 	int res = riscv_remove_breakpoint(target, breakpoint);
 	if (res == ERROR_TARGET_RESOURCE_NOT_AVAILABLE && breakpoint->type == BKPT_HARD) {
 		res = esp_common_flash_breakpoint_remove(target, &esp_riscv->esp, breakpoint);
@@ -353,11 +402,46 @@ int esp_riscv_breakpoint_remove(struct target *target, struct breakpoint *breakp
 			/* For SMP target return OK always, because SW flash breakpoint are set only
 			 *using one core, but GDB causes call to esp_algo_flash_breakpoint_remove() for
 			 *every core, since it treats flash breakpoints as HW ones */
-			return ERROR_OK;
+			res = ERROR_OK;
 		}
 	}
 
+	/* TODO: Workaround solution for OCD-749. Remove below lines after it is done */
+	if (res == ERROR_OK && prev_state == TARGET_RUNNING) {
+		LOG_TARGET_DEBUG(target, "Restore target state");
+		res = esp_riscv_core_resume(target);
+	}
+
 	return res;
+}
+
+int esp_riscv_hit_watchpoint(struct target *target, struct watchpoint **hit_watchpoint)
+{
+	/* Do not send watchpoint info if it is set by program.
+	 * Otherwise GDB will ignore T05 msg and will not halt at the watchpoint.
+	*/
+	if (esp_riscv_is_wp_set_by_program(target))
+		return ERROR_FAIL;
+
+	return riscv_hit_watchpoint(target, hit_watchpoint);
+}
+
+int esp_riscv_resume(struct target *target, int current, target_addr_t address,
+		int handle_breakpoints, int debug_execution)
+{
+	/* If the target stopped due to breakpoint/watchpoint set by program,
+	 * we need to handle_breakpoints to make single step
+	 */
+	if (!handle_breakpoints && target->debug_reason == DBG_REASON_BREAKPOINT) {
+		if (esp_riscv_is_bp_set_by_program(target))
+			handle_breakpoints = true;
+	}
+	if (!handle_breakpoints && target->debug_reason == DBG_REASON_WATCHPOINT) {
+		if (esp_riscv_is_wp_set_by_program(target))
+			handle_breakpoints = true;
+	}
+
+	return riscv_target_resume(target, current, address, handle_breakpoints, debug_execution);
 }
 
 int esp_riscv_on_halt(struct target *target)
@@ -505,10 +589,6 @@ int esp_riscv_wait_algorithm(struct target *target,
 			return result;
 	}
 
-	/* The current hart id might have been changed in poll(). */
-	if (riscv_select_current_hart(target) != ERROR_OK)
-		return ERROR_FAIL;
-
 	struct reg *reg_pc = register_get_by_name(target->reg_cache, "pc", true);
 	if (reg_pc->type->get(reg_pc) != ERROR_OK)
 		return ERROR_FAIL;
@@ -562,6 +642,8 @@ int esp_riscv_wait_algorithm(struct target *target,
 			return ERROR_FAIL;
 		}
 	}
+	if (riscv_flush_registers(target) != ERROR_OK)
+		return ERROR_FAIL;
 	return ERROR_OK;
 }
 
@@ -649,100 +731,12 @@ int esp_riscv_write_memory(struct target *target, target_addr_t address,
 	return riscv_target.write_memory(target, address, size, count, buffer);
 }
 
-int esp_riscv_poll(struct target *target)
-{
-	return riscv_target.poll(target);
-}
-
-int esp_riscv_halt(struct target *target)
-{
-	return riscv_target.halt(target);
-}
-
-int esp_riscv_resume(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints, int debug_execution)
-{
-	return riscv_target.resume(target, current, address, handle_breakpoints, debug_execution);
-}
-
-int esp_riscv_step(
-	struct target *target,
-	int current,
-	target_addr_t address,
-	int handle_breakpoints)
-{
-	return riscv_target.step(target, current, address, handle_breakpoints);
-}
-
-int esp_riscv_assert_reset(struct target *target)
-{
-	return riscv_target.assert_reset(target);
-}
-
-int esp_riscv_deassert_reset(struct target *target)
-{
-	return riscv_target.deassert_reset(target);
-}
-
-int esp_riscv_checksum_memory(struct target *target,
-	target_addr_t address, uint32_t count,
-	uint32_t *checksum)
-{
-	return riscv_target.checksum_memory(target, address, count, checksum);
-}
-
-int esp_riscv_get_gdb_reg_list_noread(struct target *target,
-	struct reg **reg_list[], int *reg_list_size,
-	enum target_register_class reg_class)
-{
-	return riscv_target.get_gdb_reg_list_noread(target, reg_list, reg_list_size, reg_class);
-}
-
-int esp_riscv_get_gdb_reg_list(struct target *target,
-	struct reg **reg_list[], int *reg_list_size,
-	enum target_register_class reg_class)
-{
-	return riscv_target.get_gdb_reg_list(target, reg_list, reg_list_size, reg_class);
-}
-
-const char *esp_riscv_get_gdb_arch(struct target *target)
-{
-	return riscv_target.get_gdb_arch(target);
-}
-
-int esp_riscv_arch_state(struct target *target)
-{
-	return riscv_target.arch_state(target);
-}
-
-int esp_riscv_add_watchpoint(struct target *target, struct watchpoint *watchpoint)
-{
-	return riscv_target.add_watchpoint(target, watchpoint);
-}
-
-int esp_riscv_remove_watchpoint(struct target *target,
-	struct watchpoint *watchpoint)
-{
-	return riscv_target.remove_watchpoint(target, watchpoint);
-}
-
-int esp_riscv_hit_watchpoint(struct target *target, struct watchpoint **hit_watchpoint)
-{
-	return riscv_target.hit_watchpoint(target, hit_watchpoint);
-}
-
-unsigned int esp_riscv_address_bits(struct target *target)
-{
-	return riscv_target.address_bits(target);
-}
-
 bool esp_riscv_core_is_halted(struct target *target)
 {
-	uint32_t dmstatus;
-	RISCV_INFO(r);
-	if (r->dmi_read(target, &dmstatus, DM_DMSTATUS) != ERROR_OK)
+	enum riscv_hart_state state;
+	if (riscv_get_hart_state(target, &state) != ERROR_OK)
 		return false;
-	return get_field(dmstatus, DM_DMSTATUS_ALLHALTED);
+	return state == RISCV_STATE_HALTED;
 }
 
 int esp_riscv_core_halt(struct target *target)

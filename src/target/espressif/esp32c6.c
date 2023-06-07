@@ -122,9 +122,6 @@ static const char *esp32c6_get_reset_reason(enum esp32c6_reset_reason reset_numb
 	return "Unknown reset cause";
 }
 
-extern struct target_type riscv_target;
-extern const struct command_registration riscv_command_handlers[];
-
 static int esp32c6_on_reset(struct target *target);
 
 static int esp32c6_wdt_disable(struct target *target)
@@ -339,7 +336,7 @@ static int esp32c6_poll(struct target *target)
 			}
 		}
 	}
-	return esp_riscv_poll(target);
+	return riscv_openocd_poll(target);
 }
 
 static const struct command_registration esp32c6_command_handlers[] = {
@@ -371,30 +368,30 @@ struct target_type esp32c6_target = {
 	/* poll current target status */
 	.poll = esp32c6_poll,
 
-	.halt = esp_riscv_halt,
+	.halt = riscv_halt,
 	.resume = esp_riscv_resume,
-	.step = esp_riscv_step,
+	.step = riscv_openocd_step,
 
-	.assert_reset = esp_riscv_assert_reset,
-	.deassert_reset = esp_riscv_deassert_reset,
+	.assert_reset = riscv_assert_reset,
+	.deassert_reset = riscv_deassert_reset,
 
 	.read_memory = esp_riscv_read_memory,
 	.write_memory = esp_riscv_write_memory,
 
-	.checksum_memory = esp_riscv_checksum_memory,
+	.checksum_memory = riscv_checksum_memory,
 
-	.get_gdb_arch = esp_riscv_get_gdb_arch,
-	.get_gdb_reg_list = esp_riscv_get_gdb_reg_list,
-	.get_gdb_reg_list_noread = esp_riscv_get_gdb_reg_list_noread,
+	.get_gdb_arch = riscv_get_gdb_arch,
+	.get_gdb_reg_list = riscv_get_gdb_reg_list,
+	.get_gdb_reg_list_noread = riscv_get_gdb_reg_list_noread,
 
 	.add_breakpoint = esp_riscv_breakpoint_add,
 	.remove_breakpoint = esp_riscv_breakpoint_remove,
 
-	.add_watchpoint = esp_riscv_add_watchpoint,
-	.remove_watchpoint = esp_riscv_remove_watchpoint,
+	.add_watchpoint = riscv_add_watchpoint,
+	.remove_watchpoint = riscv_remove_watchpoint,
 	.hit_watchpoint = esp_riscv_hit_watchpoint,
 
-	.arch_state = esp_riscv_arch_state,
+	.arch_state = riscv_arch_state,
 
 	.run_algorithm = esp_riscv_run_algorithm,
 	.start_algorithm = esp_riscv_start_algorithm,
@@ -402,5 +399,5 @@ struct target_type esp32c6_target = {
 
 	.commands = esp32c6_command_handlers,
 
-	.address_bits = esp_riscv_address_bits,
+	.address_bits = riscv_xlen_nonconst,
 };

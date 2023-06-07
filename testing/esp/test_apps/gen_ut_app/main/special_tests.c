@@ -205,14 +205,14 @@ static void target_bp_func1()
     s_var1 = 0x12345; TEST_BREAK_LOC(target_wp_var1_1);
     ESP_LOGI(TAG, "Target BP func '%s' on core %d.", __func__,  xPortGetCoreID());
     volatile int tmp = s_var1; (void)tmp; TEST_BREAK_LOC(target_wp_var1_2);
-    /* we've just resumed from WP on previous line, deugger could modify breakpoints config, so set next BP here */
+    /* we've just resumed from WP on previous line, debugger could modify breakpoints config, so set next BP here */
     SET_BP(1, target_bp_func2);
     target_bp_func2();
 }
 
-static void target_bp_task(void *pvParameter)
+static void target_bp_wp_task(void *pvParameter)
 {
-    ESP_LOGI(TAG, "Start target BP task on core %d", xPortGetCoreID());
+    ESP_LOGI(TAG, "Start target BP and WP task on core %d", xPortGetCoreID());
 
     SET_BP(0, target_bp_func1);
     SET_WP(0, (void *)&s_var1, sizeof(s_var1), WATCHPOINT_TRIGGER_ON_RW);
@@ -221,7 +221,6 @@ static void target_bp_task(void *pvParameter)
     target_bp_func1();
 }
 
-#if CONFIG_IDF_TARGET_ARCH_RISCV
 static void target_wp_reconf_task(void *pvParameter)
 {
     ESP_LOGI(TAG, "Start target WP reconfigure task on core %d", xPortGetCoreID());
@@ -243,7 +242,6 @@ static void target_wp_reconf_task(void *pvParameter)
 
     target_bp_func1();
 }
-#endif
 
 ut_result_t special_test_do(int test_num)
 {
@@ -287,18 +285,14 @@ ut_result_t special_test_do(int test_num)
 #endif
         case 803:
         {
-            xTaskCreatePinnedToCore(&target_bp_task, "target_bp_task", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
+            xTaskCreatePinnedToCore(&target_bp_wp_task, "target_bp_wp_task", 4096, NULL, 5, NULL, portNUM_PROCESSORS-1);
             break;
         }
-#if CONFIG_IDF_TARGET_ARCH_RISCV
-        /* we have two different tests for Xtensa and RISCV with the same ID. See above.
-           TODO: switch to string test IDs like 'test_bp.DebuggerBreakpointTestsDual.test_bp_add_remove_run', 'test_bp.DebuggerBreakpointTests*.test_bp_add_remove_run' */
-        case 804:
+        case 808:
         {
             xTaskCreatePinnedToCore(&target_wp_reconf_task, "target_wp_reconf_task", 2048, NULL, 5, NULL, portNUM_PROCESSORS-1);
             break;
         }
-#endif
         default:
 #if CONFIG_IDF_TARGET_ARCH_XTENSA
             if (TEST_ID_MATCH(TEST_ID_PATTERN(gh264_psram_check), test_num))

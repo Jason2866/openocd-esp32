@@ -9,4 +9,6 @@ git diff HEAD~${cnt} \
                 -x "a/.gitlab/*" \
                 -x "a/HACKING" \
                 -x "a/testing/esp/*" \
-            | ./tools/scripts/checkpatch.pl --no-signoff -
+                -x "a/contrib/loaders/flash/esp/*" \
+            | ./tools/scripts/checkpatch.pl --no-signoff --ignore MACRO_ARG_REUSE --ignore UNNECESSARY_PARENTHESES \
+                --ignore MACRO_ARG_PRECEDENCE -
