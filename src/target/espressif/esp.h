@@ -10,6 +10,12 @@
 
 #include <stdint.h>
 #include "flash/nor/esp_flash.h"
+#include <helper/bits.h>
+
+#define IS_1XXX(v)		(((v) & 0x08) == 0x08)
+#define IS_0100(v)      (((v) & 0x0f) == 0x04)
+
+#define ESP_FLASH_BOOT_MODE	0x08
 
 /* must be in sync with ESP-IDF version */
 /** Size of the pre-compiled target buffer for stub trampoline.
@@ -37,7 +43,8 @@ enum esp_dbg_stub_id {
 };
 
 #define ESP_DBG_STUB_MAGIC_NUM_VAL      0xFEEDBEEF
-#define ESP_DBG_STUB_CAP_GCOV_THREAD    (1 << 0)
+#define ESP_DBG_STUB_CAP_GCOV_THREAD    BIT(0)
+
 
 /**
  * Debug stubs descriptor. ID: ESP_DBG_STUB_DESC
@@ -45,14 +52,16 @@ enum esp_dbg_stub_id {
  * @note Must be in sync with ESP-IDF version
  */
 struct esp_dbg_stubs_desc {
-	/** Address of pre-compiled target buffer for stub trampoline. Size of the buffer is
-	 * ESP_DBG_STUBS_CODE_BUF_SIZE. */
+	/** Address of pre-compiled target buffer for stub trampoline.
+	 * Size of the buffer is ESP_DBG_STUBS_CODE_BUF_SIZE
+	 */
 	uint32_t tramp_addr;
 	/** Pre-compiled target buffer's addr for stack. The size of the buffer is ESP_DBG_STUBS_STACK_MIN_SIZE.
-	    Target has the buffer which is used for the stack of onboard algorithms.
-	If stack size required by algorithm exceeds ESP_DBG_STUBS_STACK_MIN_SIZE,
-	it should be allocated using onboard function pointed by 'data_alloc' and
-	freed by 'data_free'. They fit to the minimal stack. See below. */
+	 * Target has the buffer which is used for the stack of onboard algorithms.
+	 * If stack size required by algorithm exceeds ESP_DBG_STUBS_STACK_MIN_SIZE,
+	 * it should be allocated using onboard function pointed by 'data_alloc' and
+	 * freed by 'data_free'. They fit to the minimal stack. See below.
+	 */
 	uint32_t min_stack_addr;
 	/** Address of malloc-like function to allocate buffer on target. */
 	uint32_t data_alloc;
@@ -72,6 +81,11 @@ struct esp_dbg_stubs {
 	uint32_t entries_count;
 	/** Debug stubs decsriptor. */
 	struct esp_dbg_stubs_desc desc;
+};
+
+struct esp_panic_reason {
+	uint32_t addr;
+	uint32_t len;
 };
 
 /**
@@ -107,6 +121,7 @@ struct esp_common {
 	struct esp_flash_breakpoints flash_brps;
 	const struct algorithm_hw *algo_hw;
 	struct esp_dbg_stubs dbg_stubs;
+	struct esp_panic_reason panic_reason;
 };
 
 struct esp_ops {
@@ -116,6 +131,7 @@ struct esp_ops {
 	int (*reset_reason_fetch)(struct target *target, int *rsn_id, const char **rsn_str);
 };
 
+struct esp_common *target_to_esp_common(struct target *target);
 int esp_common_init(struct esp_common *esp,
 	const struct esp_flash_breakpoint_ops *flash_brps_ops,
 	const struct algorithm_hw *algo_hw);
@@ -127,8 +143,18 @@ int esp_common_flash_breakpoint_remove(struct target *target,
 	struct breakpoint *breakpoint);
 bool esp_common_flash_breakpoint_exists(struct esp_common *esp,
 	struct breakpoint *breakpoint);
-int esp_common_handle_gdb_detach(struct target *target, struct esp_common *esp_common);
+int esp_common_handle_gdb_detach(struct target *target);
+int esp_common_gdb_detach_command(struct command_invocation *cmd);
 
 int esp_dbgstubs_table_read(struct target *target, struct esp_dbg_stubs *dbg_stubs);
+
+void esp_common_assist_debug_monitor_disable(struct target *target, uint32_t address, uint32_t *value);
+void esp_common_assist_debug_monitor_restore(struct target *target, uint32_t address, uint32_t value);
+int esp_common_read_pseudo_ex_reason(struct target *target);
+
+static inline bool esp_is_flash_boot(uint32_t strap_reg)
+{
+	return (IS_1XXX(strap_reg) || IS_0100(strap_reg));
+}
 
 #endif	/* OPENOCD_TARGET_ESP_H */

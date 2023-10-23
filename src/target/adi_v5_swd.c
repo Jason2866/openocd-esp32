@@ -42,6 +42,7 @@
 #include <jtag/interface.h>
 
 #include <jtag/swd.h>
+#include <jtag/adapter.h>
 
 /* for debug, set do_sync to true to force synchronous transfers */
 static bool do_sync;
@@ -147,7 +148,7 @@ static int swd_queue_dp_write_inner(struct adiv5_dap *dap, unsigned int reg,
 	swd_finish_read(dap);
 
 	if (reg == DP_SELECT) {
-		dap->select = data & (DP_SELECT_APSEL | DP_SELECT_APBANK | DP_SELECT_DPBANK);
+		dap->select = data & (ADIV5_DP_SELECT_APSEL | ADIV5_DP_SELECT_APBANK | DP_SELECT_DPBANK);
 
 		swd->write_reg(swd_cmd(false, false, reg), data, 0);
 
@@ -523,7 +524,7 @@ static int swd_queue_ap_bankselect(struct adiv5_ap *ap, unsigned reg)
 	}
 
 	/* ADIv5 */
-	sel = (ap->ap_num << 24) | (reg & 0x000000F0);
+	sel = (ap->ap_num << 24) | (reg & ADIV5_DP_SELECT_APBANK);
 	if (dap->select != DP_SELECT_INVALID)
 		sel |= dap->select & DP_SELECT_DPBANK;
 
@@ -657,9 +658,16 @@ static const struct command_registration swd_commands[] = {
 		 * REVISIT can we verify "just one SWD DAP" here/early?
 		 */
 		.name = "newdap",
-		.jim_handler = jim_jtag_newtap,
+		.handler = handle_jtag_newtap,
 		.mode = COMMAND_CONFIG,
-		.help = "declare a new SWD DAP"
+		.help = "declare a new SWD DAP",
+		.usage = "basename dap_type ['-irlen' count] "
+			"['-enable'|'-disable'] "
+			"['-expected_id' number] "
+			"['-ignore-version'] "
+			"['-ignore-bypass'] "
+			"['-ircapture' number] "
+			"['-mask' number]",
 	},
 	COMMAND_REGISTRATION_DONE
 };
@@ -678,7 +686,6 @@ static const struct command_registration swd_handlers[] = {
 static int swd_select(struct command_context *ctx)
 {
 	/* FIXME: only place where global 'adapter_driver' is still needed */
-	extern struct adapter_driver *adapter_driver;
 	const struct swd_driver *swd = adapter_driver->swd_ops;
 	int retval;
 

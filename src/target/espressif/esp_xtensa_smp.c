@@ -250,7 +250,8 @@ int esp_xtensa_smp_poll(struct target *target)
 		if (old_state == TARGET_DEBUG_RUNNING) {
 			target_call_event_callbacks(target, TARGET_EVENT_DEBUG_HALTED);
 		} else {
-			if (esp_xtensa_semihosting(target, &ret) == SEMIHOSTING_HANDLED) {
+			int retval = esp_xtensa_semihosting(target, &ret);
+			if (retval == SEMIHOSTING_HANDLED) {
 				if (target->smp && target->semihosting->op == ESP_SEMIHOSTING_SYS_DRV_INFO) {
 					/* semihosting's version syncing with other cores */
 					foreach_smp_target(head, target->smp_targets) {
@@ -264,19 +265,24 @@ int esp_xtensa_smp_poll(struct target *target)
 				if (ret == ERROR_OK && esp_xtensa->semihost.need_resume &&
 					!esp_xtensa_smp->other_core_does_resume) {
 					esp_xtensa->semihost.need_resume = false;
-					/* Resume xtensa_resume will handle BREAK instruction. */
-					ret = target_resume(target, 1, 0, 1, 0);
+					/* BREAK instruction will be handled in the xtensa_semihosting_post_result. */
+					ret = target_resume(target, 1, 0, 0, 0);
 					if (ret != ERROR_OK) {
 						LOG_ERROR("Failed to resume target");
 						return ret;
 					}
 				}
 				return ret;
+			} else if (retval == SEMIHOSTING_WAITING) {
+				if (target->gdb_service)
+					target->gdb_service->target = target;
+				target_call_event_callbacks(target, TARGET_EVENT_HALTED);
+				return ERROR_OK;
 			}
 			/* check whether any core polled by esp_xtensa_smp_update_halt_gdb() requested resume */
 			if (target->smp && other_core_resume_req) {
-				/* Resume xtensa_resume will handle BREAK instruction. */
-				ret = target_resume(target, 1, 0, 1, 0);
+				/* BREAK instruction will be handled in the xtensa_semihosting_post_result. */
+				ret = target_resume(target, 1, 0, 0, 0);
 				if (ret != ERROR_OK) {
 					LOG_ERROR("Failed to resume target");
 					return ret;
@@ -659,30 +665,17 @@ int esp_xtensa_smp_target_init(struct command_context *cmd_ctx, struct target *t
 
 	if (target->smp) {
 		struct target_list *head;
-		if (!target->working_area_cfg.phys_spec) {
+		if (!target->working_area_phys_spec) {
 			/* Working areas are configured for one core only. Use the same config data for other cores.
 			It is safe to share config data because algorithms can not be ran on different cores concurrently. */
 			foreach_smp_target(head, target->smp_targets) {
 				struct target *curr = head->target;
 				if (curr == target)
 					continue;
-				if (curr->working_area_cfg.phys_spec) {
-					memcpy(&target->working_area_cfg,
-						&curr->working_area_cfg,
-						sizeof(curr->working_area_cfg));
-					break;
-				}
-			}
-		}
-		if (!target->alt_working_area_cfg.phys_spec) {
-			foreach_smp_target(head, target->smp_targets) {
-				struct target *curr = head->target;
-				if (curr == target)
-					continue;
-				if (curr->alt_working_area_cfg.phys_spec) {
-					memcpy(&target->alt_working_area_cfg,
-						&curr->alt_working_area_cfg,
-						sizeof(curr->alt_working_area_cfg));
+				if (curr->working_area_phys_spec) {
+					memcpy(&target->working_area,
+						&curr->working_area,
+						sizeof(curr->working_area));
 					break;
 				}
 			}
@@ -999,29 +992,6 @@ COMMAND_HANDLER(esp_xtensa_smp_cmd_tracedump)
 		target_to_xtensa(target), CMD_ARGV[0]);
 }
 
-COMMAND_HANDLER(esp_gdb_detach_command)
-{
-	if (CMD_ARGC != 0)
-		return ERROR_COMMAND_SYNTAX_ERROR;
-
-	struct target *target = get_current_target(CMD_CTX);
-	struct esp_xtensa_common *esp_xtensa;
-	if (target->smp) {
-		struct target_list *head;
-		foreach_smp_target(head, target->smp_targets) {
-			CMD_CTX->current_target = head->target;
-			esp_xtensa = target_to_esp_xtensa(CMD_CTX->current_target);
-			int ret = esp_common_handle_gdb_detach(CMD_CTX->current_target, &esp_xtensa->esp);
-			if (ret != ERROR_OK)
-				return ret;
-		}
-		cmd->ctx->current_target = target;
-		return ERROR_OK;
-	}
-	esp_xtensa = target_to_esp_xtensa(target);
-	return esp_common_handle_gdb_detach(target, &esp_xtensa->esp);
-}
-
 const struct command_registration esp_xtensa_smp_xtensa_command_handlers[] = {
 	{
 		.name = "xtdef",
@@ -1144,7 +1114,7 @@ const struct command_registration esp_xtensa_smp_xtensa_command_handlers[] = {
 const struct command_registration esp_xtensa_smp_esp_command_handlers[] = {
 	{
 		.name = "gdb_detach_handler",
-		.handler = esp_gdb_detach_command,
+		.handler = esp_common_gdb_detach_command,
 		.mode = COMMAND_ANY,
 		.help = "Handles gdb-detach events and makes necessary cleanups such as removing flash breakpoints",
 		.usage = "",

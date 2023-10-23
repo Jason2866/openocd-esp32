@@ -964,7 +964,7 @@ int armv8_mmu_translate_va_pa(struct target *target, target_addr_t va,
 	};
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target %s not halted", target_name(target));
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -1682,7 +1682,7 @@ struct reg_cache *armv8_build_reg_cache(struct target *target)
 			LOG_ERROR("unable to allocate reg type list");
 
 		if (i == ARMV8_PAUTH_CMASK || i == ARMV8_PAUTH_DMASK)
-			reg_list[i].hidden = !armv8->enable_pauth;
+			reg_list[i].exist = armv8->enable_pauth;
 	}
 
 	arm->cpsr = reg_list + ARMV8_XPSR;

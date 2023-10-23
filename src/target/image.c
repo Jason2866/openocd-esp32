@@ -50,12 +50,15 @@ static int autodetect_image_type(struct image *image, const char *url)
 	if (retval != ERROR_OK)
 		return retval;
 	retval = fileio_read(fileio, 9, buffer, &read_bytes);
-
-	if (retval == ERROR_OK) {
-		if (read_bytes != 9)
-			retval = ERROR_FILEIO_OPERATION_FAILED;
-	}
 	fileio_close(fileio);
+
+	/* If the file is smaller than 9 bytes, it can only be bin */
+	if (retval == ERROR_OK && read_bytes != 9) {
+		LOG_DEBUG("Less than 9 bytes in the image file found.");
+		LOG_DEBUG("BIN image detected.");
+		image->type = IMAGE_BINARY;
+		return ERROR_OK;
+	}
 
 	if (retval != ERROR_OK)
 		return retval;
@@ -82,8 +85,10 @@ static int autodetect_image_type(struct image *image, const char *url)
 		&& (buffer[1] >= '0') && (buffer[1] < '9')) {
 		LOG_DEBUG("S19 image detected.");
 		image->type = IMAGE_SRECORD;
-	} else
+	} else {
+		LOG_DEBUG("BIN image detected.");
 		image->type = IMAGE_BINARY;
+	}
 
 	return ERROR_OK;
 }
@@ -91,20 +96,22 @@ static int autodetect_image_type(struct image *image, const char *url)
 static int identify_image_type(struct image *image, const char *type_string, const char *url)
 {
 	if (type_string) {
-		if (!strcmp(type_string, "bin"))
+		if (!strcmp(type_string, "bin")) {
 			image->type = IMAGE_BINARY;
-		else if (!strcmp(type_string, "ihex"))
+		} else if (!strcmp(type_string, "ihex")) {
 			image->type = IMAGE_IHEX;
-		else if (!strcmp(type_string, "elf"))
+		} else if (!strcmp(type_string, "elf")) {
 			image->type = IMAGE_ELF;
-		else if (!strcmp(type_string, "mem"))
+		} else if (!strcmp(type_string, "mem")) {
 			image->type = IMAGE_MEMORY;
-		else if (!strcmp(type_string, "s19"))
+		} else if (!strcmp(type_string, "s19")) {
 			image->type = IMAGE_SRECORD;
-		else if (!strcmp(type_string, "build"))
+		} else if (!strcmp(type_string, "build")) {
 			image->type = IMAGE_BUILDER;
-		else
+		} else {
+			LOG_ERROR("Unknown image type: %s, use one of: bin, ihex, elf, mem, s19, build", type_string);
 			return ERROR_IMAGE_TYPE_UNKNOWN;
+		}
 	} else
 		return autodetect_image_type(image, url);
 
@@ -407,10 +414,12 @@ static int image_elf32_read_headers(struct image *image)
 		return ERROR_FILEIO_OPERATION_FAILED;
 	}
 
-	/* count useful segments (loadable) */
+	/* count useful segments (loadable), ignore BSS section */
 	image->num_sections = 0;
 	for (i = 0; i < elf->segment_count; i++)
-		if (field32(elf, elf->segments32[i].p_type) == PT_LOAD)
+		if ((field32(elf,
+			elf->segments32[i].p_type) == PT_LOAD) &&
+			(field32(elf, elf->segments32[i].p_filesz) != 0))
 			image->num_sections++;
 
 	if (image->num_sections == 0) {
@@ -447,8 +456,10 @@ static int image_elf32_read_headers(struct image *image)
 	}
 
 	for (i = 0, j = 0; i < elf->segment_count; i++) {
-		if (field32(elf, elf->segments32[i].p_type) == PT_LOAD) {
-			image->sections[j].size = field32(elf, elf->segments32[i].p_memsz);
+		if ((field32(elf,
+			elf->segments32[i].p_type) == PT_LOAD) &&
+			(field32(elf, elf->segments32[i].p_filesz) != 0)) {
+			image->sections[j].size = field32(elf, elf->segments32[i].p_filesz);
 			if (load_to_vaddr)
 				image->sections[j].base_address = field32(elf,
 						elf->segments32[i].p_vaddr);
@@ -528,10 +539,12 @@ static int image_elf64_read_headers(struct image *image)
 		return ERROR_FILEIO_OPERATION_FAILED;
 	}
 
-	/* count useful segments (loadable) */
+	/* count useful segments (loadable), ignore BSS section */
 	image->num_sections = 0;
 	for (i = 0; i < elf->segment_count; i++)
-		if (field32(elf, elf->segments64[i].p_type) == PT_LOAD)
+		if ((field32(elf,
+			elf->segments64[i].p_type) == PT_LOAD) &&
+			(field64(elf, elf->segments64[i].p_filesz) != 0))
 			image->num_sections++;
 
 	if (image->num_sections == 0) {
@@ -568,8 +581,10 @@ static int image_elf64_read_headers(struct image *image)
 	}
 
 	for (i = 0, j = 0; i < elf->segment_count; i++) {
-		if (field32(elf, elf->segments64[i].p_type) == PT_LOAD) {
-			image->sections[j].size = field64(elf, elf->segments64[i].p_memsz);
+		if ((field32(elf,
+			elf->segments64[i].p_type) == PT_LOAD) &&
+			(field64(elf, elf->segments64[i].p_filesz) != 0)) {
+			image->sections[j].size = field64(elf, elf->segments64[i].p_filesz);
 			if (load_to_vaddr)
 				image->sections[j].base_address = field64(elf,
 						elf->segments64[i].p_vaddr);
@@ -643,8 +658,6 @@ static int image_elf32_read_section(struct image *image,
 {
 	struct image_elf *elf = image->type_private;
 	Elf32_Phdr *segment = (Elf32_Phdr *)image->sections[section].private;
-	uint32_t filesz = field32(elf, segment->p_filesz);
-	uint32_t memsz = field32(elf, segment->p_memsz);
 	size_t read_size, really_read;
 	int retval;
 
@@ -653,9 +666,9 @@ static int image_elf32_read_section(struct image *image,
 	LOG_DEBUG("load segment %d at 0x%" TARGET_PRIxADDR " (sz = 0x%" PRIx32 ")", section, offset, size);
 
 	/* read initialized data in current segment if any */
-	if (offset < filesz) {
+	if (offset < field32(elf, segment->p_filesz)) {
 		/* maximal size present in file for the current segment */
-		read_size = MIN(size, filesz - offset);
+		read_size = MIN(size, field32(elf, segment->p_filesz) - offset);
 		LOG_DEBUG("read elf: size = 0x%zx at 0x%" TARGET_PRIxADDR "", read_size,
 			field32(elf, segment->p_offset) + offset);
 		/* read initialized area of the segment */
@@ -669,20 +682,11 @@ static int image_elf32_read_section(struct image *image,
 			LOG_ERROR("cannot read ELF segment content, read failed");
 			return retval;
 		}
-		buffer += read_size;
-		offset += read_size;
 		size -= read_size;
 		*size_read += read_size;
 		/* need more data ? */
 		if (!size)
 			return ERROR_OK;
-	}
-
-	/* clear bss in current segment if any */
-	if (offset >= filesz) {
-		uint32_t memset_size = MIN(size, memsz - filesz);
-		memset(buffer, 0, memset_size);
-		*size_read += memset_size;
 	}
 
 	return ERROR_OK;
@@ -697,8 +701,6 @@ static int image_elf64_read_section(struct image *image,
 {
 	struct image_elf *elf = image->type_private;
 	Elf64_Phdr *segment = (Elf64_Phdr *)image->sections[section].private;
-	uint64_t filesz = field64(elf, segment->p_filesz);
-	uint64_t memsz = field64(elf, segment->p_memsz);
 	size_t read_size, really_read;
 	int retval;
 
@@ -707,9 +709,9 @@ static int image_elf64_read_section(struct image *image,
 	LOG_DEBUG("load segment %d at 0x%" TARGET_PRIxADDR " (sz = 0x%" PRIx32 ")", section, offset, size);
 
 	/* read initialized data in current segment if any */
-	if (offset < filesz) {
+	if (offset < field64(elf, segment->p_filesz)) {
 		/* maximal size present in file for the current segment */
-		read_size = MIN(size, filesz - offset);
+		read_size = MIN(size, field64(elf, segment->p_filesz) - offset);
 		LOG_DEBUG("read elf: size = 0x%zx at 0x%" TARGET_PRIxADDR "", read_size,
 			field64(elf, segment->p_offset) + offset);
 		/* read initialized area of the segment */
@@ -723,20 +725,11 @@ static int image_elf64_read_section(struct image *image,
 			LOG_ERROR("cannot read ELF segment content, read failed");
 			return retval;
 		}
-		buffer += read_size;
-		offset += read_size;
 		size -= read_size;
 		*size_read += read_size;
 		/* need more data ? */
 		if (!size)
 			return ERROR_OK;
-	}
-
-	/* clear bss in current segment if any */
-	if (offset >= filesz) {
-		uint64_t memset_size = MIN(size, memsz - filesz);
-		memset(buffer, 0, memset_size);
-		*size_read += memset_size;
 	}
 
 	return ERROR_OK;

@@ -12,13 +12,10 @@ noinst_LTLIBRARIES += %D%/libespressif.la
 		%D%/esp32s2.c \
 		%D%/esp32s3.c \
 		%D%/esp32c2.c \
-		%D%/esp32c2.h \
 		%D%/esp32h2.c \
-		%D%/esp32h2.h \
 		%D%/esp32c3.c \
-		%D%/esp32c3.h \
 		%D%/esp32c6.c \
-		%D%/esp32c6.h \
+		%D%/esp32p4.c \
 		%D%/esp.c \
 		%D%/esp.h \
 		%D%/esp_riscv.c \

@@ -9,15 +9,15 @@ struct riscv_program;
 #include "opcodes.h"
 #include "gdb_regs.h"
 #include "jtag/jtag.h"
+#include "target/target.h"
 #include "target/register.h"
 #include "target/semihosting_common.h"
 #include <helper/command.h>
+#include <helper/bits.h>
 
 #define RISCV_COMMON_MAGIC	0x52495356U
 
-/* The register cache is statically allocated. */
-#define RISCV_MAX_HARTS 1024
-#define RISCV_MAX_REGISTERS 5000
+#define RISCV_MAX_HARTS  ((int)BIT(20))
 #define RISCV_MAX_TRIGGERS 32
 #define RISCV_MAX_HWBPS 16
 
@@ -26,9 +26,11 @@ struct riscv_program;
 
 #define RISCV_SATP_MODE(xlen)  ((xlen) == 32 ? SATP32_MODE : SATP64_MODE)
 #define RISCV_SATP_PPN(xlen)  ((xlen) == 32 ? SATP32_PPN : SATP64_PPN)
+#define RISCV_HGATP_MODE(xlen)  ((xlen) == 32 ? HGATP32_MODE : HGATP64_MODE)
+#define RISCV_HGATP_PPN(xlen)  ((xlen) == 32 ? HGATP32_PPN : HGATP64_PPN)
 #define RISCV_PGSHIFT 12
 
-# define PG_MAX_LEVEL 4
+#define PG_MAX_LEVEL 4
 
 #define RISCV_NUM_MEM_ACCESS_METHODS  3
 
@@ -176,10 +178,13 @@ struct riscv_info {
 
 	/* Helper functions that target the various RISC-V debug spec
 	 * implementations. */
-	int (*get_register)(struct target *target, riscv_reg_t *value, int regid);
-	int (*set_register)(struct target *target, int regid, uint64_t value);
-	int (*get_register_buf)(struct target *target, uint8_t *buf, int regno);
-	int (*set_register_buf)(struct target *target, int regno,
+	int (*get_register)(struct target *target, riscv_reg_t *value,
+			enum gdb_regno regno);
+	int (*set_register)(struct target *target, enum gdb_regno regno,
+			riscv_reg_t value);
+	int (*get_register_buf)(struct target *target, uint8_t *buf,
+			enum gdb_regno regno);
+	int (*set_register_buf)(struct target *target, enum gdb_regno regno,
 			const uint8_t *buf);
 	int (*select_target)(struct target *target);
 	int (*get_hart_state)(struct target *target, enum riscv_hart_state *state);
@@ -188,6 +193,21 @@ struct riscv_info {
 	 * was resumed. */
 	int (*resume_go)(struct target *target);
 	int (*step_current_hart)(struct target *target);
+
+	/* These get called from riscv_poll_hart(), which is a house of cards
+	 * together with openocd_poll(), so be careful not to upset things too
+	 * much. */
+	int (*handle_became_halted)(struct target *target,
+		enum riscv_hart_state previous_riscv_state);
+	int (*handle_became_running)(struct target *target,
+		enum riscv_hart_state previous_riscv_state);
+	int (*handle_became_unavailable)(struct target *target,
+		enum riscv_hart_state previous_riscv_state);
+
+	/* Called periodically (no guarantees about frequency), while there's
+	 * nothing else going on. */
+	int (*tick)(struct target *target);
+
 	int (*on_halt)(struct target *target);
 	/* Indicates that target was reset.*/
 	int (*on_reset)(struct target *target);
@@ -275,6 +295,8 @@ struct riscv_info {
 	int64_t last_activity;
 
 	yes_no_maybe_t vsew64_supported;
+
+	bool range_trigger_fallback_encountered;
 };
 
 COMMAND_HELPER(riscv_print_info_line, const char *section, const char *key,
@@ -289,6 +311,7 @@ typedef struct {
 	const char *name;
 	int level;
 	unsigned va_bits;
+	/* log2(PTESIZE) */
 	unsigned pte_shift;
 	unsigned vpn_shift[PG_MAX_LEVEL];
 	unsigned vpn_mask[PG_MAX_LEVEL];
@@ -378,8 +401,16 @@ int riscv_xlen_of_hart(const struct target *target);
  * consecutive and start with mhartid=0. */
 unsigned int riscv_count_harts(struct target *target);
 
-/** Set register, updating the cache. */
+/**
+ * Set the register value. For cacheable registers, only the cache is updated
+ * (write-back mode).
+ */
 int riscv_set_register(struct target *target, enum gdb_regno i, riscv_reg_t v);
+/**
+ * Set the register value and immediately write it to the target
+ * (write-through mode).
+ */
+int riscv_write_register(struct target *target, enum gdb_regno i, riscv_reg_t v);
 /** Get register, from the cache if it's in there. */
 int riscv_get_register(struct target *target, riscv_reg_t *value,
 		enum gdb_regno r);
@@ -408,6 +439,7 @@ int riscv_dmi_write_u64_bits(struct target *target);
 
 int riscv_enumerate_triggers(struct target *target);
 
+/* Espressif; we exported some functions for the common esp_riscv target */
 int riscv_assert_reset(struct target *target);
 int riscv_deassert_reset(struct target *target);
 int riscv_checksum_memory(struct target *target,

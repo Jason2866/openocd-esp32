@@ -72,7 +72,7 @@ class BreakpointTestsImpl:
             6) Removes several breakpoints and adds them again.
             7) Repeat steps 3-5 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             self.add_bp(f)
         self.readd_bps()
@@ -98,7 +98,7 @@ class BreakpointTestsImpl:
             6) Check backtrace at the stop point.
             7) Repeat steps 3-6 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             if f == 'vTaskDelay':
                 self.add_bp(f, ignore_count=2)
@@ -124,7 +124,7 @@ class BreakpointTestsImpl:
             6) Check backtrace at the stop point.
             7) Repeat steps 3-6 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             if f == 'vTaskDelay':
                 self.add_bp(f, cond='s_count1 == 1')
@@ -153,7 +153,7 @@ class BreakpointTestsImpl:
             7) Connect GDB to OOCD.
             8) Repeat steps 3-7 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             self.add_bp(f)
         for i in range(5):
@@ -181,7 +181,7 @@ class BreakpointTestsImpl:
         """
         # 2 HW breaks + 1 flash SW break + RAM SW break
         self.bps = ['app_main', 'test_timer_isr', 'test_timer_isr_func', 'test_timer_isr_ram_func']
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             self.add_bp(f)
 
@@ -209,7 +209,7 @@ class WatchpointTestsImpl:
             6) Check that watched expression has correct value.
             7) Repeat steps 3-6 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         self.wps = {'s_count1': None}
         for e in self.wps:
             self.add_wp(e, 'rw')
@@ -242,7 +242,7 @@ class WatchpointTestsImpl:
             7) Connect GDB to OOCD.
             8) Repeat steps 3-7 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         self.wps = {'s_count1': None, 's_count2': None}
         cnt = 0
         cnt2 = 100
@@ -279,7 +279,6 @@ def two_cores_concurrently_hit_bps(self):
         7) Check that all set breakpoints hit one time at least.
     """
     hit_cnt = [0] * len(self.bps)
-    self.select_sub_test(101)
     for f in self.bps:
         self.add_bp(f)
     for i in range(30):
@@ -307,15 +306,42 @@ def two_cores_concurrently_hit_wps(self):
         5) Check backtrace at the stop point.
         6) Repeat steps 3-5 several times.
     """
-    self.select_sub_test(101)
     self.wps = {'s_count1': None, 's_count2': None}
     for e in self.wps:
         self.add_wp(e, 'w')
     wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP]
-    if testee_info.arch == "xtensa" or testee_info.idf_ver == IdfVersion.fromstr('latest'):
+    if testee_info.arch == "xtensa" or testee_info.idf_ver > IdfVersion.fromstr('5.0'):
         wp_stop_reason.append(dbg.TARGET_STOP_REASON_WP)
     for i in range(10):
         self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11', 's_count2'])
+
+
+def appcpu_early_hw_bps(self):
+    """
+        This test checks if breakpoints set on APP_CPU just after reset work well.
+    """
+    self.gdb.target_reset()
+    rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
+    self.add_bp('call_start_cpu1', hw=True)
+    self.resume_exec()
+    self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
+    # We stopped when FreRTOS is not running yet, so GDB is connected to
+    # one core only (most probably core 0) and shows only one thread representing that core.
+    # Prepare to switch GDB to core 1.
+    self.gdb.monitor_run("esp32 smp_gdb 1", 5)
+    try:
+        # Switch GDB to core 1.
+        self.gdb.monitor_run("resume", 5)
+        # Invalidate register cache to re-read them and get proper backtrace
+        self.gdb.console_cmd_run("maint flush register-cache", 5)
+        # In this scenario we can not check stop reason for core 1,
+        # because GDB could be initially connected to core 0.
+        # So just check the function name we stopped in on core 1.
+        frame = self.gdb.read_current_frame()
+        self.assertEqual(frame['func'], 'call_start_cpu1')
+    finally:
+        # restore default GDB SMP handling to avoid other tests failures
+        self.gdb.monitor_run("esp32 smp_gdb -1", 5)
 
 class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTestsImpl):
     """ Test cases for breakpoints in dual core mode
@@ -328,6 +354,11 @@ class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTes
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
 
+    # OCD-773
+    @idf_ver_min_for_chip('5.1', ['esp32'])
+    def test_appcpu_early_hw_bps(self):
+        appcpu_early_hw_bps(self)
+
 class DebuggerBreakpointTestsDualEncrypted(DebuggerGenericTestAppTestsDualEncrypted, BreakpointTestsImpl):
     """ Breakpoint test cases on encrypted flash in dual core mode
     """
@@ -337,6 +368,11 @@ class DebuggerBreakpointTestsDualEncrypted(DebuggerGenericTestAppTestsDualEncryp
 
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
+
+    # OCD-773
+    @idf_ver_min_for_chip('5.1', ['esp32'])
+    def test_appcpu_early_hw_bps(self):
+        appcpu_early_hw_bps(self)
 
 class DebuggerBreakpointTestsSingle(DebuggerGenericTestAppTestsSingle, BreakpointTestsImpl):
     """ Test cases for breakpoints in single core mode

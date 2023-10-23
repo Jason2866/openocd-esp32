@@ -124,13 +124,16 @@ static int esp_xtensa_dbgstubs_restore(struct target *target)
 	return ERROR_OK;
 }
 
-void esp_xtensa_print_exception_reason(struct target *target)
+static void esp_xtensa_print_exception_reason(struct target *target)
 {
 	if (target->state != TARGET_HALTED)
 		return;
 
 	if (target->halt_issued)
 		/* halted upon `halt` request. This is not an exception */
+		return;
+
+	if (esp_common_read_pseudo_ex_reason(target) == ERROR_OK)
 		return;
 
 	struct esp_xtensa_common *esp_xtensa = target_to_esp_xtensa(target);
@@ -385,25 +388,10 @@ int esp_xtensa_breakpoint_remove(struct target *target, struct breakpoint *break
 	return res;
 }
 
-COMMAND_HANDLER(esp_gdb_detach_command)
-{
-	if (CMD_ARGC != 0)
-		return ERROR_COMMAND_SYNTAX_ERROR;
-
-	struct target *target = get_current_target(CMD_CTX);
-	if (!target) {
-		LOG_ERROR("No target selected");
-		return ERROR_FAIL;
-	}
-
-	struct esp_xtensa_common *esp_xtensa = target_to_esp_xtensa(target);
-	return esp_common_handle_gdb_detach(target, &esp_xtensa->esp);
-}
-
 const struct command_registration esp_command_handlers[] = {
 	{
 		.name = "gdb_detach_handler",
-		.handler = esp_gdb_detach_command,
+		.handler = esp_common_gdb_detach_command,
 		.mode = COMMAND_ANY,
 		.help = "Handles gdb-detach events and makes necessary cleanups such as removing flash breakpoints",
 		.usage = "",

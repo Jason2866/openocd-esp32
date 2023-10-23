@@ -72,10 +72,6 @@ int riscv_program_exec(struct riscv_program *p, struct target *t)
 		return ERROR_FAIL;
 	}
 
-	for (size_t i = 0; i < riscv_debug_buffer_size(p->target); ++i)
-		if (i >= riscv_debug_buffer_size(p->target))
-			p->debug_buffer[i] = riscv_read_debug_buffer(t, i);
-
 	for (size_t i = GDB_REGNO_ZERO; i <= GDB_REGNO_XPR31; ++i)
 		if (p->writes_xreg[i])
 			riscv_set_register(t, i, saved_registers[i]);
@@ -121,6 +117,23 @@ int riscv_program_lhr(struct riscv_program *p, enum gdb_regno d, enum gdb_regno 
 int riscv_program_lbr(struct riscv_program *p, enum gdb_regno d, enum gdb_regno b, int offset)
 {
 	return riscv_program_insert(p, lb(d, b, offset));
+}
+
+int riscv_program_load(struct riscv_program *p, enum gdb_regno d, enum gdb_regno b, int offset,
+		unsigned int size)
+{
+	switch (size) {
+	case 1:
+		return riscv_program_lbr(p, d, b, offset);
+	case 2:
+		return riscv_program_lhr(p, d, b, offset);
+	case 4:
+		return riscv_program_lwr(p, d, b, offset);
+	case 8:
+		return riscv_program_ldr(p, d, b, offset);
+	}
+	assert(false && "Unsupported size");
+	return ERROR_FAIL;
 }
 
 int riscv_program_csrrsi(struct riscv_program *p, enum gdb_regno d, unsigned int z, enum gdb_regno csr)
