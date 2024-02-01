@@ -46,3 +46,13 @@ jobs:
       with:
         name: openocd.darwin-arm64.tar
         path: openocd.darwin-arm64.tar
+
+    - name: Release
+      uses: jason2866/action-gh-release@v1.3
+      with:
+        tag_name: ${{ github.run_number }}
+        prerelease: true
+        files: |
+          openocd.darwin-arm64.tar
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
