@@ -1,0 +1,48 @@
+# Manually started action to build OpenOCD for Mac and upload to an artifact
+
+name: Build MacOS ARM
+on: [workflow_dispatch]
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: false
+
+    - uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '14.3.1'
+
+    - name: Build OpenOCD
+      run: |
+        uname -a
+        brew update
+        brew install bash libtool automake libusb hidapi
+        git clone https://github.com/Jason2866/openocd-esp32.git
+        pushd openocd
+        git checkout m1
+        # Remove TEXI warning
+        grep -v raggedright doc/openocd.texi > p2
+        mv p2 doc/openocd.texi
+        bash bootstrap
+        ./configure --prefix=/tmp/openocd
+        make -j
+        make install
+        popd
+        cp -a /opt/homebrew/lib/libhid*.dylib /tmp/openocd/bin/.
+        cp -a /opt/homebrew/lib/libusb*.dylib /tmp/openocd/bin/.
+        cp -a /opt/homebrew/lib/libcap*.dylib /tmp/openocd/bin/.
+
+        # Make dylibs relative
+        otool -L /tmp/openocd/bin/openocd
+        (cwd=$(pwd); cd /tmp/openocd/bin; bash $cwd/macos-relative-dylibs.sh)
+        otool -L /tmp/openocd/bin/openocd
+
+        tar cvf openocd.darwin-arm64.tar -C /tmp openocd
+
+    - name: Upload OpenOCD
+      uses: actions/upload-artifact@v4
+      with:
+        name: openocd.darwin-arm64.tar
+        path: openocd.darwin-arm64.tar
