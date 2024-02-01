@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include <helper/bits.h>
+#include <helper/align.h>
 #include <target/target.h>
 #include <target/target_type.h>
 #include <target/smp.h>
@@ -227,15 +228,13 @@ int esp_riscv_poll(struct target *target)
 		if (res != ERROR_OK) {
 			LOG_TARGET_ERROR(target, "Failed to read DMSTATUS (%d)!", res);
 		} else {
-			if (esp_riscv->get_reset_reason) {
-				uint32_t reset_buffer = 0;
-				res = target_read_u32(target, esp_riscv->rtccntl_reset_state_reg, &reset_buffer);
-				if (res != ERROR_OK) {
+			if (esp_riscv->print_reset_reason) {
+				uint32_t reset_reason_reg_val = 0;
+				res = target_read_u32(target, esp_riscv->rtccntl_reset_state_reg, &reset_reason_reg_val);
+				if (res != ERROR_OK)
 					LOG_TARGET_WARNING(target, "Failed to read reset cause register (%d)!", res);
-				} else {
-					LOG_TARGET_INFO(target, "Reset cause (%ld) - (%s)", reset_buffer & esp_riscv->reset_cause_mask,
-						esp_riscv->get_reset_reason((reset_buffer)));
-				}
+				else
+					esp_riscv->print_reset_reason(target, reset_reason_reg_val);
 			}
 
 			uint32_t strap_reg = 0;
@@ -692,7 +691,7 @@ int esp_riscv_wait_algorithm(struct target *target,
 				riscv_reg_t reg_value;
 				if (riscv_get_register(target, &reg_value, regno) != ERROR_OK)
 					break;
-				LOG_ERROR("%s = 0x%" PRIx64, gdb_regno_name(regno), reg_value);
+				LOG_ERROR("%s = 0x%" PRIx64, gdb_regno_name(target, regno), reg_value);
 			}
 			return ERROR_TARGET_TIMEOUT;
 		}
@@ -787,21 +786,17 @@ int esp_riscv_run_algorithm(struct target *target, int num_mem_params,
 int esp_riscv_read_memory(struct target *target, target_addr_t address,
 	uint32_t size, uint32_t count, uint8_t *buffer)
 {
-	/* TODO: find out the widest system bus access size. For now we are assuming it is equal to xlen */
-	uint32_t sba_access_size = target_data_bits(target) / 8;
+	RISCV_INFO(r);
+	uint32_t sba_access_size = r->data_bits(target) / 8;
 
-	if (size < sba_access_size) {
+	if (size < sba_access_size || !IS_ALIGNED(address, sba_access_size)) {
 		LOG_DEBUG("Use %d-bit access: size: %d\tcount:%d\tstart address: 0x%08"
 			TARGET_PRIxADDR, sba_access_size * 8, size, count, address);
-		target_addr_t al_addr = address & ~(sba_access_size - 1);
+		target_addr_t al_addr = ALIGN_DOWN(address, sba_access_size);
 		uint32_t al_len = (size * count) + address - al_addr;
-		uint32_t al_cnt = (al_len + sba_access_size - 1) & ~(sba_access_size - 1);
+		uint32_t al_cnt = ALIGN_UP(al_len, sba_access_size);
 		uint8_t al_buf[al_cnt];
-		int ret = riscv_target.read_memory(target,
-			al_addr,
-			sba_access_size,
-			al_cnt / sba_access_size,
-			al_buf);
+		int ret = riscv_target.read_memory(target, al_addr, sba_access_size, al_cnt / sba_access_size, al_buf);
 		if (ret == ERROR_OK)
 			memcpy(buffer, &al_buf[address & (sba_access_size - 1)], size * count);
 		return ret;
@@ -813,31 +808,20 @@ int esp_riscv_read_memory(struct target *target, target_addr_t address,
 int esp_riscv_write_memory(struct target *target, target_addr_t address,
 	uint32_t size, uint32_t count, const uint8_t *buffer)
 {
-	/* TODO: find out the widest system bus access size. For now we are assuming it is equal to xlen */
-	uint32_t sba_access_size = target_data_bits(target) / 8;
+	RISCV_INFO(r);
+	uint32_t sba_access_size = r->data_bits(target) / 8;
 
-	/* Emulate using 32-bit SBA access */
-	if (size < sba_access_size) {
+	if (size < sba_access_size || !IS_ALIGNED(address, sba_access_size)) {
 		LOG_DEBUG("Use %d-bit access: size: %d\tcount:%d\tstart address: 0x%08"
 			TARGET_PRIxADDR, sba_access_size * 8, size, count, address);
-		target_addr_t al_addr = address & ~(sba_access_size - 1);
+		target_addr_t al_addr = ALIGN_DOWN(address, sba_access_size);
 		uint32_t al_len = (size * count) + address - al_addr;
-		uint32_t al_cnt = (al_len + sba_access_size - 1) & ~(sba_access_size - 1);
+		uint32_t al_cnt = ALIGN_UP(al_len, sba_access_size);
 		uint8_t al_buf[al_cnt];
-		int ret = riscv_target.read_memory(target,
-			al_addr,
-			sba_access_size,
-			al_cnt / sba_access_size,
-			al_buf);
+		int ret = riscv_target.read_memory(target, al_addr, sba_access_size, al_cnt / sba_access_size, al_buf);
 		if (ret == ERROR_OK) {
-			memcpy(&al_buf[address & (sba_access_size - 1)],
-				buffer,
-				size * count);
-			ret = riscv_target.write_memory(target,
-				address,
-				sba_access_size,
-				al_cnt / sba_access_size,
-				al_buf);
+			memcpy(&al_buf[address & (sba_access_size - 1)], buffer, size * count);
+			ret = riscv_target.write_memory(target, al_addr, sba_access_size, al_cnt / sba_access_size, al_buf);
 		}
 		return ret;
 	}

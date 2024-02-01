@@ -12,11 +12,11 @@
 #include "imp.h"
 #include <target/smp.h>
 #include <target/espressif/esp_xtensa_apptrace.h>
-#include <target/xtensa/xtensa_algorithm.h>
+#include <target/espressif/esp_xtensa_algorithm.h>
 #include <target/espressif/esp_xtensa_smp.h>
 #include "esp_xtensa.h"
-#include "contrib/loaders/flash/esp/esp32/stub_flasher_image.h"
-#include "contrib/loaders/flash/esp/esp32/stub_flasher_image_wlog.h"
+#include "../../../contrib/loaders/flash/espressif/esp32/stub_flasher_image.h"
+#include "../../../contrib/loaders/flash/espressif/esp32/stub_flasher_image_wlog.h"
 
 #define ESP32_DROM_LOW            0x3F400000
 #define ESP32_DROM_HIGH           0x3F800000
@@ -30,16 +30,16 @@ struct esp32_flash_bank {
 };
 
 static const uint8_t esp32_flasher_stub_code[] = {
-#include "contrib/loaders/flash/esp/esp32/stub_flasher_code.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32/stub_flasher_code.inc"
 };
 static const uint8_t esp32_flasher_stub_data[] = {
-#include "contrib/loaders/flash/esp/esp32/stub_flasher_data.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32/stub_flasher_data.inc"
 };
 static const uint8_t esp32_flasher_stub_code_wlog[] = {
-#include "contrib/loaders/flash/esp/esp32/stub_flasher_code_wlog.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32/stub_flasher_code_wlog.inc"
 };
 static const uint8_t esp32_flasher_stub_data_wlog[] = {
-#include "contrib/loaders/flash/esp/esp32/stub_flasher_data_wlog.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32/stub_flasher_data_wlog.inc"
 };
 
 static const struct esp_flasher_stub_config s_esp32_stub_cfg = {
@@ -53,7 +53,7 @@ static const struct esp_flasher_stub_config s_esp32_stub_cfg = {
 	.iram_len = ESP32_STUB_IRAM_LEN,
 	.dram_org = ESP32_STUB_DRAM_ORG,
 	.dram_len = ESP32_STUB_DRAM_LEN,
-	.first_user_reg_param = XTENSA_STUB_ARGS_FUNC_START,
+	.first_user_reg_param = ESP_XTENSA_STUB_ARGS_FUNC_START,
 	.reverse = true
 };
 
@@ -68,7 +68,7 @@ static const struct esp_flasher_stub_config s_esp32_stub_cfg_wlog = {
 	.iram_len = ESP32_STUB_IRAM_LEN,
 	.dram_org = ESP32_STUB_DRAM_ORG,
 	.dram_len = ESP32_STUB_DRAM_LEN,
-	.first_user_reg_param = XTENSA_STUB_ARGS_FUNC_START,
+	.first_user_reg_param = ESP_XTENSA_STUB_ARGS_FUNC_START,
 	.log_buff_addr = ESP32_STUB_WLOG_LOG_ADDR,
 	.log_buff_size = ESP32_STUB_WLOG_LOG_SIZE,
 	.reverse = true

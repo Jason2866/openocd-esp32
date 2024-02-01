@@ -11,12 +11,12 @@
 
 #include "imp.h"
 #include <target/smp.h>
-#include <target/xtensa/xtensa_algorithm.h>
+#include <target/espressif/esp_xtensa_algorithm.h>
 #include <target/espressif/esp_xtensa_apptrace.h>
 #include <target/espressif/esp_xtensa_smp.h>
 #include "esp_xtensa.h"
-#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_image.h"
-#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_image_wlog.h"
+#include "../../../contrib/loaders/flash/espressif/esp32s3/stub_flasher_image.h"
+#include "../../../contrib/loaders/flash/espressif/esp32s3/stub_flasher_image_wlog.h"
 
 #define ESP32_S3_DROM_LOW             0x3C000000
 #define ESP32_S3_DROM_HIGH            0x3D000000
@@ -30,16 +30,16 @@ struct esp32s3_flash_bank {
 };
 
 static const uint8_t esp32s3_flasher_stub_code[] = {
-#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_code.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32s3/stub_flasher_code.inc"
 };
 static const uint8_t esp32s3_flasher_stub_data[] = {
-#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_data.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32s3/stub_flasher_data.inc"
 };
 static const uint8_t esp32s3_flasher_stub_code_wlog[] = {
-#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_code_wlog.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32s3/stub_flasher_code_wlog.inc"
 };
 static const uint8_t esp32s3_flasher_stub_data_wlog[] = {
-#include "contrib/loaders/flash/esp/esp32s3/stub_flasher_data_wlog.inc"
+#include "../../../contrib/loaders/flash/espressif/esp32s3/stub_flasher_data_wlog.inc"
 };
 
 static const struct esp_flasher_stub_config s_esp32s3_stub_cfg = {
@@ -53,7 +53,7 @@ static const struct esp_flasher_stub_config s_esp32s3_stub_cfg = {
 	.iram_len = ESP32S3_STUB_IRAM_LEN,
 	.dram_org = ESP32S3_STUB_DRAM_ORG,
 	.dram_len = ESP32S3_STUB_DRAM_LEN,
-	.first_user_reg_param = XTENSA_STUB_ARGS_FUNC_START
+	.first_user_reg_param = ESP_XTENSA_STUB_ARGS_FUNC_START
 };
 
 static const struct esp_flasher_stub_config s_esp32s3_stub_cfg_wlog = {
@@ -67,7 +67,7 @@ static const struct esp_flasher_stub_config s_esp32s3_stub_cfg_wlog = {
 	.iram_len = ESP32S3_STUB_IRAM_LEN,
 	.dram_org = ESP32S3_STUB_DRAM_ORG,
 	.dram_len = ESP32S3_STUB_DRAM_LEN,
-	.first_user_reg_param = XTENSA_STUB_ARGS_FUNC_START,
+	.first_user_reg_param = ESP_XTENSA_STUB_ARGS_FUNC_START,
 	.log_buff_addr = ESP32S3_STUB_WLOG_LOG_ADDR,
 	.log_buff_size = ESP32S3_STUB_WLOG_LOG_SIZE
 };
@@ -113,7 +113,6 @@ FLASH_BANK_COMMAND_HANDLER(esp32s3_flash_bank_command)
 		free(esp32s3_info);
 		return ret;
 	}
-	esp32s3_info->esp_xtensa.esp.flash_min_offset = 0;
 	bank->driver_priv = esp32s3_info;
 	return ERROR_OK;
 }

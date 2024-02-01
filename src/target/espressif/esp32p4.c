@@ -22,27 +22,60 @@
 #include "esp_riscv.h"
 
 /* boot mode */
-#define ESP32P4_GPIO_BASE						(0x500C0000 + 0x20000)
+#define ESP32P4_GPIO_BASE                       (0x500C0000 + 0x20000)
 #define ESP32P4_GPIO_STRAP_REG_OFF              0x0038
 #define ESP32P4_GPIO_STRAP_REG                  (ESP32P4_GPIO_BASE + ESP32P4_GPIO_STRAP_REG_OFF)
 
 /* reset cause */
-#define ESP32P4_LP_AON_BASE						0x50110000
+#define ESP32P4_LP_AON_BASE                     0x50110000
 #define ESP32P4_LP_CLKRST_RESET_CAUSE_REG       (ESP32P4_LP_AON_BASE + 0x1000 + 0x10)
 #define ESP32P4_LP_CLKRST_RESET_CAUSE_MASK      (BIT(6) - 1) /* 0x3F */
-#define ESP32P4_RESET_CAUSE(reg_val)            ((reg_val) & ESP32P4_LP_CLKRST_RESET_CAUSE_MASK)
+#define ESP32P4_LP_CORE_RESET_CAUSE_SHIFT       0
+#define ESP32P4_HP_CORE_RESET_CAUSE_SHIFT       7
+#define ESP32P4_RESET_CAUSE(reg_val, shift)     ((reg_val >> shift) & ESP32P4_LP_CLKRST_RESET_CAUSE_MASK) /* HP0*/
+
+/* cache */
+#define ESP32P4_CACHE_BASE                      (0x3FF00000 + 0x10000)
+#define ESP32P4_CACHE_SYNC_CTRL_REG             (ESP32P4_CACHE_BASE + 0x98)
+#define ESP32P4_CACHE_SYNC_MAP_REG              (ESP32P4_CACHE_BASE + 0x9C)
+#define ESP32P4_CACHE_SYNC_ADDR_REG             (ESP32P4_CACHE_BASE + 0xA0)
+#define ESP32P4_CACHE_SYNC_SIZE_REG             (ESP32P4_CACHE_BASE + 0xA4)
+
+#define ESP32P4_CACHE_MAP_L1_ICACHE0            BIT(0)
+#define ESP32P4_CACHE_MAP_L1_ICACHE1            BIT(1)
+#define ESP32P4_CACHE_MAP_L1_DCACHE             BIT(4)
+#define ESP32P4_CACHE_MAP_L2_CACHE              BIT(5)
+#define ESP32P4_CACHE_SYNC_INVALIDATE           BIT(0)
+#define ESP32P4_CACHE_SYNC_WRITEBACK            BIT(2)
+
+#define ESP32P4_IRAM0_CACHEABLE_ADDRESS_LOW     0x4ff00000U
+#define ESP32P4_IRAM0_CACHEABLE_ADDRESS_HIGH    0x4ffc0000U
+#define ESP32P4_NON_CACHEABLE_OFFSET            0x40000000U
+#define ESP32P4_NON_CACHEABLE_ADDR(addr)        ((addr) + ESP32P4_NON_CACHEABLE_OFFSET)
+#define ESP32P4_IRAM0_NON_CACHEABLE_ADDRESS_LOW     ESP32P4_NON_CACHEABLE_ADDR(ESP32P4_IRAM0_CACHEABLE_ADDRESS_LOW)
+#define ESP32P4_IRAM0_NON_CACHEABLE_ADDRESS_HIGH    ESP32P4_NON_CACHEABLE_ADDR(ESP32P4_IRAM0_CACHEABLE_ADDRESS_HIGH)
+
+#define ESP32P4_ADDRESS_IS_CACHEABLE(addr)      ((addr) >= ESP32P4_IRAM0_CACHEABLE_ADDRESS_LOW && \
+	(addr) < ESP32P4_IRAM0_CACHEABLE_ADDRESS_HIGH)
+#define ESP32P4_ADDRESS_IS_NONCACHEABLE(addr)      ((addr) >= (ESP32P4_IRAM0_NON_CACHEABLE_ADDRESS_LOW) && \
+	(addr) < (ESP32P4_IRAM0_NON_CACHEABLE_ADDRESS_HIGH))
+#define ESP32P4_ADDRESS_IS_L2MEM(addr) (ESP32P4_ADDRESS_IS_NONCACHEABLE(addr) || ESP32P4_ADDRESS_IS_CACHEABLE(addr))
 
 /* max supported hw breakpoint and watchpoint count */
-#define ESP32P4_BP_NUM                          4
-#define ESP32P4_WP_NUM                          4
+#define ESP32P4_BP_NUM                          3
+#define ESP32P4_WP_NUM                          3
+
+#define ESP32P4_ASSIST_DEBUG_CPU0_MON_REG		0xFFFFFFFF /* TODO */
 
 /* components/soc/esp32p4/include/soc/reset_reasons.h */
 enum esp32p4_reset_reason {
 	ESP32P4_CHIP_POWER_ON_RESET   = 0x01,	/* Power on reset */
 	ESP32P4_CORE_SW_RESET         = 0x03,	/* Software resets the digital core */
 	ESP32P4_SYS_PMU_PWR_DOWN_RESET = 0x05,	/* PMU HP power down system reset */
+	ESP32P4_CPU_PMU_PWR_DOWN_RESET = 0x06,	/* PMU HP power down CPU reset */
 	ESP32P4_SYS_HP_WDT_RESET      = 0x07,	/* HP WDT resets system */
 	ESP32P4_SYS_LP_WDT_RESET      = 0x09,	/* LP WDT resets system */
+	ESP32P4_SYS_LP_CPU_RESET      = 0x0A,	/* LP CPU reset */
 	ESP32P4_CORE_HP_WDT_RESET     = 0x0B,	/* HP WDT resets digital core */
 	ESP32P4_CPU0_SW_RESET         = 0x0C,	/* Software resets CPU 0 */
 	ESP32P4_CORE_LP_WDT_RESET     = 0x0D,	/* LP WDT resets digital core */
@@ -57,9 +90,9 @@ enum esp32p4_reset_reason {
 	ESP32P4_CPU_LOCKUP_RESET      = 0x1A,	/* Cpu lockup resets the chip */
 };
 
-static const char *esp32p4_get_reset_reason(int reset_number)
+static const char *esp32p4_get_reset_reason(uint32_t reset_reason_reg_val, int shift_val)
 {
-	switch (ESP32P4_RESET_CAUSE(reset_number)) {
+	switch (ESP32P4_RESET_CAUSE(reset_reason_reg_val, shift_val)) {
 	case ESP32P4_CHIP_POWER_ON_RESET:
 		return "Power on reset";
 	case ESP32P4_CORE_SW_RESET:
@@ -70,6 +103,8 @@ static const char *esp32p4_get_reset_reason(int reset_number)
 		return "HP WDT resets system";
 	case ESP32P4_SYS_LP_WDT_RESET:
 		return "LP WDT resets system";
+	case ESP32P4_SYS_LP_CPU_RESET:
+		return "PMU LP CPU reset";
 	case ESP32P4_CORE_HP_WDT_RESET:
 		return "HP WDT resets digital core";
 	case ESP32P4_CPU0_SW_RESET:
@@ -85,6 +120,9 @@ static const char *esp32p4_get_reset_reason(int reset_number)
 	case ESP32P4_SYS_CLK_GLITCH_RESET:
 		return "Glitch on clock reset";
 	case ESP32P4_CORE_EFUSE_CRC_RESET:
+	if (shift_val == ESP32P4_LP_CORE_RESET_CAUSE_SHIFT)
+		return "PMU LP CPU reset";
+	else
 		return "eFuse CRC error core reset";
 	case ESP32P4_CORE_USB_JTAG_RESET:
 		return "USB (JTAG) core reset";
@@ -98,6 +136,17 @@ static const char *esp32p4_get_reset_reason(int reset_number)
 	return "Unknown reset cause";
 }
 
+static void esp32p4_print_reset_reason(struct target *target, uint32_t reset_reason_reg_val)
+{
+	LOG_INFO("[esp32p4.lp.cpu] Reset cause (%ld) - (%s)",
+		ESP32P4_RESET_CAUSE(reset_reason_reg_val, ESP32P4_LP_CORE_RESET_CAUSE_SHIFT),
+		esp32p4_get_reset_reason(reset_reason_reg_val, ESP32P4_LP_CORE_RESET_CAUSE_SHIFT));
+
+	LOG_INFO("[esp32p4.hp.cpu] Reset cause (%ld) - (%s)",
+		ESP32P4_RESET_CAUSE(reset_reason_reg_val, ESP32P4_HP_CORE_RESET_CAUSE_SHIFT),
+		esp32p4_get_reset_reason(reset_reason_reg_val, ESP32P4_HP_CORE_RESET_CAUSE_SHIFT));
+}
+
 static const struct esp_semihost_ops esp32p4_semihost_ops = {
 	.prepare = NULL,
 	.post_reset = esp_semihosting_post_reset
@@ -108,18 +157,30 @@ static const struct esp_flash_breakpoint_ops esp32p4_flash_brp_ops = {
 	.breakpoint_remove = esp_algo_flash_breakpoint_remove
 };
 
-/* TODO: update this table for the P4 */
 static const char *esp32p4_existent_regs[] = {
 	"zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "t3", "t4", "t5", "t6",
-	"fp", "pc", "mstatus", "misa", "mtvec", "mscratch", "mepc", "mcause", "mtval", "priv",
+	"fp", "pc", "mstatus", "misa", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval",
+	"mip", "mtvt", "mnxti", "mintstatus",
+	"mscratchcsw", "mscratchcswl", "mcycle", "minstret", "mcounteren", "mcountinhibit",
+	"mhpmcounter8", "mhpmcounter9", "mhpmcounter13", "mhpmevent8", "mhpmevent9", "mhpmevent13",
+	"mcycleh", "minstreth", "mhpmcounter8h", "mhpmcounter9h", "mhpmcounter13h",
 	"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
 	"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
 	"pmpcfg0", "pmpcfg1", "pmpcfg2", "pmpcfg3",
 	"pmpaddr0", "pmpaddr1", "pmpaddr2", "pmpaddr3", "pmpaddr4", "pmpaddr5", "pmpaddr6", "pmpaddr7",
 	"pmpaddr8", "pmpaddr9", "pmpaddr10", "pmpaddr11", "pmpaddr12", "pmpaddr13", "pmpaddr14", "pmpaddr15",
-	"tselect", "tdata1", "tdata2", "tcontrol", "dcsr", "dpc", "dscratch0", "dscratch1", "hpmcounter16",
+	"tselect", "tdata1", "tdata2", "tdata3", "tcontrol", "tinfo", "mcontext",
+	"dcsr", "dpc", "dscratch0", "dscratch1",
 	/* custom exposed CSRs will start with 'csr_' prefix*/
-	/* TODO */
+	"csr_mclicbase", "csr_mxstatus", "csr_mhcr", "csr_mhint", "csr_mraddr", "csr_mexstatus",
+	"csr_mnmicause", "csr_mnmipc", "csr_mcpuid", "csr_cpu_testbus_ctrl", "csr_pm_user",
+	"csr_gpio_oen_user", "csr_gpio_in_user", "csr_gpio_out_user",
+	"csr_pma_cfg0", "csr_pma_cfg1", "csr_pma_cfg2", "csr_pma_cfg3", "csr_pma_cfg4", "csr_pma_cfg5",
+	"csr_pma_cfg6", "csr_pma_cfg7", "csr_pma_cfg8", "csr_pma_cfg9", "csr_pma_cfg10", "csr_pma_cfg11",
+	"csr_pma_cfg12", "csr_pma_cfg13", "csr_pma_cfg14", "csr_pma_cfg15", "csr_pma_addr0", "csr_pma_addr1",
+	"csr_pma_addr2", "csr_pma_addr3", "csr_pma_addr4", "csr_pma_addr5", "csr_pma_addr6", "csr_pma_addr7",
+	"csr_pma_addr8", "csr_pma_addr9", "csr_pma_addr10", "csr_pma_addr11", "csr_pma_addr12", "csr_pma_addr13",
+	"csr_pma_addr14", "csr_pma_addr15",
 };
 
 static int esp32p4_target_create(struct target *target, Jim_Interp *interp)
@@ -130,16 +191,15 @@ static int esp32p4_target_create(struct target *target, Jim_Interp *interp)
 
 	target->arch_info = esp_riscv;
 
-	// esp32p4->esp_riscv.assist_debug_cpu0_mon_reg = ESP32P4_ASSIST_DEBUG_CPU0_MON_REG;
-	// esp32p4->esp_riscv.assist_debug_cpu_offset = 0;
+	esp_riscv->assist_debug_cpu0_mon_reg = ESP32P4_ASSIST_DEBUG_CPU0_MON_REG;
+	esp_riscv->assist_debug_cpu_offset = 0;
 
 	esp_riscv->max_bp_num = ESP32P4_BP_NUM;
 	esp_riscv->max_wp_num = ESP32P4_WP_NUM;
 
 	esp_riscv->gpio_strap_reg = ESP32P4_GPIO_STRAP_REG;
 	esp_riscv->rtccntl_reset_state_reg = ESP32P4_LP_CLKRST_RESET_CAUSE_REG;
-	esp_riscv->reset_cause_mask = ESP32P4_LP_CLKRST_RESET_CAUSE_MASK;
-	esp_riscv->get_reset_reason = &esp32p4_get_reset_reason;
+	esp_riscv->print_reset_reason = &esp32p4_print_reset_reason;
 	esp_riscv->is_flash_boot = &esp_is_flash_boot;
 	esp_riscv->existent_regs = esp32p4_existent_regs;
 	esp_riscv->existent_regs_size = ARRAY_SIZE(esp32p4_existent_regs);
@@ -172,6 +232,66 @@ static int esp32p4_init_target(struct command_context *cmd_ctx,
 		return ret;
 
 	return ERROR_OK;
+}
+
+static inline uint32_t esp32p4_make_non_cachable_addr(uint32_t address)
+{
+	return (address & ESP32P4_NON_CACHEABLE_OFFSET) ? (address + ESP32P4_NON_CACHEABLE_OFFSET) : address;
+}
+// We will call sync cache only at running state before/after accessing memory from sysbus.
+// Halted state will be handled by execute_fence() before/after accessing memory from progbuf.
+static int esp32p4_sync_cache(struct target *target, uint32_t op)
+{
+	int res;
+	uint8_t value_buf[4];
+
+	target_buffer_set_u32(target, value_buf, ESP32P4_CACHE_MAP_L1_DCACHE | ESP32P4_CACHE_MAP_L2_CACHE);
+	res = esp_riscv_write_memory(target, ESP32P4_CACHE_SYNC_MAP_REG, 4, 1, value_buf);
+	if (res != ERROR_OK)
+		return res;
+	target_buffer_set_u32(target, value_buf, 0);
+	res = esp_riscv_write_memory(target, ESP32P4_CACHE_SYNC_ADDR_REG, 4, 1, value_buf);
+	if (res != ERROR_OK)
+		return res;
+	res = esp_riscv_write_memory(target, ESP32P4_CACHE_SYNC_SIZE_REG, 4, 1, value_buf);
+	if (res != ERROR_OK)
+		return res;
+	target_buffer_set_u32(target, value_buf, op);
+	res = esp_riscv_write_memory(target, ESP32P4_CACHE_SYNC_CTRL_REG, 4, 1, value_buf);
+	return res;
+}
+
+static int esp32p4_read_memory(struct target *target, target_addr_t address,
+	uint32_t size, uint32_t count, uint8_t *buffer)
+{
+	if (target->state == TARGET_RUNNING && ESP32P4_ADDRESS_IS_L2MEM(address)) {
+		int res = esp32p4_sync_cache(target, ESP32P4_CACHE_SYNC_WRITEBACK);
+		if (res != ERROR_OK)
+			LOG_TARGET_WARNING(target, "Cache writeback failed! Read main memory anyway.");
+		address = esp32p4_make_non_cachable_addr(address);
+	}
+
+	return esp_riscv_read_memory(target, address, size, count, buffer);
+}
+
+static int esp32p4_write_memory(struct target *target, target_addr_t address,
+	uint32_t size, uint32_t count, const uint8_t *buffer)
+{
+	bool cache_invalidate = false;
+
+	if (target->state == TARGET_RUNNING && ESP32P4_ADDRESS_IS_L2MEM(address)) {
+		/* write to main memory and invalidate cache */
+		esp32p4_sync_cache(target, ESP32P4_CACHE_SYNC_WRITEBACK);
+		address = esp32p4_make_non_cachable_addr(address);
+		cache_invalidate = true;
+	}
+
+	int res = esp_riscv_write_memory(target, address, size, count, buffer);
+
+	if (cache_invalidate && esp32p4_sync_cache(target, ESP32P4_CACHE_SYNC_INVALIDATE) != ERROR_OK)
+		LOG_TARGET_WARNING(target, "Cache invalidate failed!");
+
+	return res;
 }
 
 static const struct command_registration esp32p4_command_handlers[] = {
@@ -210,8 +330,8 @@ struct target_type esp32p4_target = {
 	.assert_reset = riscv_assert_reset,
 	.deassert_reset = riscv_deassert_reset,
 
-	.read_memory = esp_riscv_read_memory,
-	.write_memory = esp_riscv_write_memory,
+	.read_memory = esp32p4_read_memory,
+	.write_memory = esp32p4_write_memory,
 
 	.checksum_memory = riscv_checksum_memory,
 

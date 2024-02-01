@@ -19,7 +19,6 @@
 #include <target/algorithm.h>
 
 #include "xtensa.h"
-#include "xtensa_algorithm.h"
 /* Swap 4-bit Xtensa opcodes and fields */
 #define XT_NIBSWAP8(V)									\
 	((((V) & 0x0F) << 4)								\
@@ -1097,7 +1096,7 @@ int xtensa_assert_reset(struct target *target)
 {
 	struct xtensa *xtensa = target_to_xtensa(target);
 
-	LOG_TARGET_DEBUG(target, "target_number=%i, begin", target->target_number);
+	LOG_TARGET_DEBUG(target, " begin");
 	xtensa_queue_pwr_reg_write(xtensa,
 		XDMREG_PWRCTL,
 		PWRCTL_JTAGDEBUGUSE(xtensa) | PWRCTL_DEBUGWAKEUP(xtensa) | PWRCTL_MEMWAKEUP(xtensa) |
@@ -2847,9 +2846,7 @@ int xtensa_run_algorithm(struct target *target,
 	target_addr_t entry_point, target_addr_t exit_point,
 	unsigned int timeout_ms, void *arch_info)
 {
-	int retval;
-
-	retval = xtensa_start_algorithm(target,
+	int retval = xtensa_start_algorithm(target,
 		num_mem_params, mem_params,
 		num_reg_params, reg_params,
 		entry_point, exit_point,
@@ -4208,6 +4205,38 @@ COMMAND_HANDLER(xtensa_cmd_smpbreak)
 		get_current_target(CMD_CTX));
 }
 
+COMMAND_HELPER(xtensa_cmd_dm_rw_do, struct xtensa *xtensa)
+{
+	if (CMD_ARGC == 1) {
+		// read: xtensa dm addr
+		uint32_t addr = strtoul(CMD_ARGV[0], NULL, 0);
+		uint32_t val;
+		int res = xtensa_dm_read(&xtensa->dbg_mod, addr, &val);
+		if (res == ERROR_OK)
+			command_print(CMD, "xtensa DM(0x%08" PRIx32 ") -> 0x%08" PRIx32, addr, val);
+		else
+			command_print(CMD, "xtensa DM(0x%08" PRIx32 ") : read ERROR %" PRId32, addr, res);
+		return res;
+	} else if (CMD_ARGC == 2) {
+		// write: xtensa dm addr value
+		uint32_t addr = strtoul(CMD_ARGV[0], NULL, 0);
+		uint32_t val = strtoul(CMD_ARGV[1], NULL, 0);
+		int res = xtensa_dm_write(&xtensa->dbg_mod, addr, val);
+		if (res == ERROR_OK)
+			command_print(CMD, "xtensa DM(0x%08" PRIx32 ") <- 0x%08" PRIx32, addr, val);
+		else
+			command_print(CMD, "xtensa DM(0x%08" PRIx32 ") : write ERROR %" PRId32, addr, res);
+		return res;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
+COMMAND_HANDLER(xtensa_cmd_dm_rw)
+{
+	return CALL_COMMAND_HANDLER(xtensa_cmd_dm_rw_do,
+		target_to_xtensa(get_current_target(CMD_CTX)));
+}
+
 COMMAND_HELPER(xtensa_cmd_tracestart_do, struct xtensa *xtensa)
 {
 	struct xtensa_trace_status trace_status;
@@ -4463,6 +4492,13 @@ static const struct command_registration xtensa_any_command_handlers[] = {
 		.mode = COMMAND_ANY,
 		.help = "Set the way the CPU chains OCD breaks",
 		.usage = "[none|breakinout|runstall] | [BreakIn] [BreakOut] [RunStallIn] [DebugModeOut]",
+	},
+	{
+		.name = "dm",
+		.handler = xtensa_cmd_dm_rw,
+		.mode = COMMAND_ANY,
+		.help = "Xtensa DM read/write",
+		.usage = "addr [value]"
 	},
 	{
 		.name = "perfmon_enable",

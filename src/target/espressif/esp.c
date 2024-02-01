@@ -33,7 +33,7 @@ struct esp_common *target_to_esp_common(struct target *target)
 
 int esp_common_init(struct esp_common *esp,
 	const struct esp_flash_breakpoint_ops *flash_brps_ops,
-	const struct algorithm_hw *algo_hw)
+	const struct esp_algorithm_hw *algo_hw)
 {
 	esp->algo_hw = algo_hw;
 	esp->flash_brps.ops = flash_brps_ops;
@@ -217,6 +217,12 @@ int esp_common_handle_gdb_detach(struct target *target)
 void esp_common_assist_debug_monitor_disable(struct target *target, uint32_t address, uint32_t *value)
 {
 	LOG_TARGET_DEBUG(target, "addr 0x%08" PRIx32, address);
+
+	if (address == ESP_ASSIST_DEBUG_INVALID_VALUE) {
+		*value = ESP_ASSIST_DEBUG_INVALID_VALUE;
+		LOG_TARGET_DEBUG(target, "assist debug monitor feature is not supported yet!");
+		return;
+	}
 
 	int res = target_read_u32(target, address, value);
 	if (res != ERROR_OK) {
