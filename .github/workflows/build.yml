@@ -30,14 +30,14 @@ jobs:
         make -j
         make install
         popd
-        cp -a /opt/homebrew/opt/libusb/lib/libhid*.dylib /tmp/openocd/bin/.
-        cp -a /opt/homebrew/opt/libusb/lib/libusb*.dylib /tmp/openocd/bin/.
-        cp -a /opt/homebrew/opt/libusb/lib/libcap*.dylib /tmp/openocd/bin/.
+        #cp -a /opt/homebrew/opt/libusb/lib/libhid*.dylib /tmp/openocd/bin/.
+        cp -a /opt/homebrew/Cellar/libusb/1.0.27/libusb*.dylib /tmp/openocd/bin/.
+        #cp -a /opt/homebrew/opt/libusb/lib/libcap*.dylib /tmp/openocd/bin/.
 
         # Make dylibs relative
-        otool -L /tmp/openocd/bin/openocd
-        (cwd=$(pwd); cd /tmp/openocd/bin; bash $cwd/macos-relative-dylibs.sh)
-        otool -L /tmp/openocd/bin/openocd
+        #otool -L /tmp/openocd/bin/openocd
+        #(cwd=$(pwd); cd /tmp/openocd/bin; bash $cwd/macos-relative-dylibs.sh)
+        #otool -L /tmp/openocd/bin/openocd
 
         tar cvf openocd.darwin-arm64.tar -C /tmp openocd
 
