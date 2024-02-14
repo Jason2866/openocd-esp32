@@ -31,7 +31,7 @@ jobs:
         make install
         popd
         #cp -a /opt/homebrew/opt/libusb/lib/libhid*.dylib /tmp/openocd/bin/.
-        cp -a /opt/homebrew/Cellar/libusb/1.0.27/libusb*.dylib /tmp/openocd/bin/.
+        #cp -a /opt/homebrew/Cellar/libusb/1.0.27/libusb*.dylib /tmp/openocd/bin/.
         #cp -a /opt/homebrew/opt/libusb/lib/libcap*.dylib /tmp/openocd/bin/.
 
         # Make dylibs relative
