@@ -2105,6 +2105,8 @@ static int resume_go(struct target *target, int current,
 	int result;
 	if (!r->get_hart_state) {
 		struct target_type *tt = get_target_type(target);
+		if (!tt)
+			return ERROR_FAIL;
 		result = tt->resume(target, current, address, handle_breakpoints,
 				debug_execution);
 	} else {
@@ -2638,7 +2640,7 @@ static int riscv_write_memory(struct target *target, target_addr_t address,
 	return tt->write_memory(target, physical_addr, size, count, buffer);
 }
 
-const char *riscv_get_gdb_arch(struct target *target)
+const char *riscv_get_gdb_arch(const struct target *target)
 {
 	switch (riscv_xlen(target)) {
 		case 32:
@@ -3755,8 +3757,8 @@ COMMAND_HANDLER(riscv_dmi_write)
 		bool progbuf_touched = (address >= DM_PROGBUF0 && address <= DM_PROGBUF15);
 		bool dm_deactivated = (address == DM_DMCONTROL && (value & DM_DMCONTROL_DMACTIVE) == 0);
 		if (progbuf_touched || dm_deactivated) {
-			if (r->invalidate_cached_debug_buffer)
-				r->invalidate_cached_debug_buffer(target);
+			if (r->invalidate_cached_progbuf)
+				r->invalidate_cached_progbuf(target);
 		}
 
 		return retval;
@@ -3825,8 +3827,8 @@ COMMAND_HANDLER(riscv_dm_write)
 		bool progbuf_touched = (address >= DM_PROGBUF0 && address <= DM_PROGBUF15);
 		bool dm_deactivated = (address == DM_DMCONTROL && (value & DM_DMCONTROL_DMACTIVE) == 0);
 		if (progbuf_touched || dm_deactivated) {
-			if (r->invalidate_cached_debug_buffer)
-				r->invalidate_cached_debug_buffer(target);
+			if (r->invalidate_cached_progbuf)
+				r->invalidate_cached_progbuf(target);
 		}
 
 		return retval;
@@ -4472,7 +4474,7 @@ COMMAND_HANDLER(riscv_exec_progbuf)
 		return ERROR_FAIL;
 	}
 
-	if (riscv_debug_buffer_size(target) == 0) {
+	if (riscv_progbuf_size(target) == 0) {
 		LOG_TARGET_ERROR(target, "exec_progbuf: Program buffer not implemented "
 				"in the target.");
 		return ERROR_FAIL;
@@ -5349,29 +5351,29 @@ static enum riscv_halt_reason riscv_halt_reason(struct target *target)
 	return r->halt_reason(target);
 }
 
-size_t riscv_debug_buffer_size(struct target *target)
+size_t riscv_progbuf_size(struct target *target)
 {
 	RISCV_INFO(r);
-	return r->debug_buffer_size;
+	return r->progbuf_size;
 }
 
-int riscv_write_debug_buffer(struct target *target, int index, riscv_insn_t insn)
+int riscv_write_progbuf(struct target *target, int index, riscv_insn_t insn)
 {
 	RISCV_INFO(r);
-	r->write_debug_buffer(target, index, insn);
+	r->write_progbuf(target, index, insn);
 	return ERROR_OK;
 }
 
-riscv_insn_t riscv_read_debug_buffer(struct target *target, int index)
+riscv_insn_t riscv_read_progbuf(struct target *target, int index)
 {
 	RISCV_INFO(r);
-	return r->read_debug_buffer(target, index);
+	return r->read_progbuf(target, index);
 }
 
-int riscv_execute_debug_buffer(struct target *target)
+int riscv_execute_progbuf(struct target *target, uint32_t *cmderr)
 {
 	RISCV_INFO(r);
-	return r->execute_debug_buffer(target);
+	return r->execute_progbuf(target, cmderr);
 }
 
 void riscv_fill_dm_write_u64(struct target *target, char *buf, int a, uint64_t d)

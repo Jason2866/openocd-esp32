@@ -226,19 +226,19 @@ struct gdb_fileio_info {
 };
 
 /** Returns a description of the endianness for the specified target. */
-static inline const char *target_endianness(struct target *target)
+static inline const char *target_endianness(const struct target *target)
 {
 	return (target->endianness == TARGET_ENDIAN_UNKNOWN) ? "unknown" :
 			(target->endianness == TARGET_BIG_ENDIAN) ? "big endian" : "little endian";
 }
 
 /** Returns the instance-specific name of the specified target. */
-static inline const char *target_name(struct target *target)
+static inline const char *target_name(const struct target *target)
 {
 	return target->cmd_name;
 }
 
-const char *debug_reason_name(struct target *t);
+const char *debug_reason_name(const struct target *t);
 
 enum target_event {
 
@@ -305,7 +305,7 @@ struct target_event_action {
 	struct target_event_action *next;
 };
 
-bool target_has_event_action(struct target *target, enum target_event event);
+bool target_has_event_action(const struct target *target, enum target_event event);
 
 struct target_event_callback {
 	int (*callback)(struct target *target, enum target_event event, void *priv);
@@ -425,7 +425,7 @@ struct target *get_target(const char *id);
  * This routine is a wrapper for the target->type->name field.
  * Note that this is not an instance-specific name for his target.
  */
-const char *target_type_name(struct target *target);
+const char *target_type_name(const struct target *target);
 
 /**
  * Examine the specified @a target, letting it perform any
@@ -436,7 +436,7 @@ const char *target_type_name(struct target *target);
 int target_examine_one(struct target *target);
 
 /** @returns @c true if target_set_examined() has been called. */
-static inline bool target_was_examined(struct target *target)
+static inline bool target_was_examined(const struct target *target)
 {
 	return target->examined;
 }
@@ -505,7 +505,7 @@ int target_hit_watchpoint(struct target *target,
  *
  * This routine is a wrapper for target->type->get_gdb_arch.
  */
-const char *target_get_gdb_arch(struct target *target);
+const char *target_get_gdb_arch(const struct target *target);
 
 /**
  * Obtain the registers for GDB.
@@ -531,7 +531,7 @@ int target_get_gdb_reg_list_noread(struct target *target,
  *
  * Some target do not implement the necessary code required by GDB.
  */
-bool target_supports_gdb_connection(struct target *target);
+bool target_supports_gdb_connection(const struct target *target);
 
 /**
  * Step the target.
@@ -698,7 +698,7 @@ unsigned target_address_bits(struct target *target);
 unsigned int target_data_bits(struct target *target);
 
 /** Return the *name* of this targets current state */
-const char *target_state_name(struct target *target);
+const char *target_state_name(const struct target *target);
 
 /** Return the *name* of a target event enumeration value */
 const char *target_event_name(enum target_event event);
@@ -800,6 +800,8 @@ int target_profiling_default(struct target *target, uint32_t *samples, uint32_t
 #define ERROR_TARGET_NOT_EXAMINED (-311)
 #define ERROR_TARGET_DUPLICATE_BREAKPOINT (-312)
 #define ERROR_TARGET_ALGO_EXIT  (-313)
+#define ERROR_TARGET_SIZE_NOT_SUPPORTED  (-314)
+#define ERROR_TARGET_PACKING_NOT_SUPPORTED  (-315)
 
 extern bool get_target_reset_nag(void);
 
