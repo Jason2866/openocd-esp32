@@ -69,12 +69,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifact
-      - run: ls -R artifact
+      - run: |
+          ls -R artifact
+          tar -cvf openocd-macos-x86.tar artifact/openocd-macos-x86
+          tar -cvf openocd-macos-arm64.tar artifact/openocd-macos-arm64
+          tar -cvf openocd-linux.tar artifact/openocd-linux
+          tar -cvf openocd-windows.tar artifact/openocd-windows
       - uses: jason2866/action-gh-release@v1.3
         with:
           tag_name: ${{ github.run_number }}
           prerelease: true
           files: |
-            artifact/*
+            openocd-macos-x86.tar
+            openocd-macos-arm64.tar
+            openocd-linux.tar
+            openocd-windows.tar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
