@@ -70,10 +70,10 @@ jobs:
         with:
           path: tool-openocd-esp32
       - run: |
-          tar -cvf openocd-macos-x86.tar tool-openocd-esp32/openocd-macos-x86
-          tar -cvf openocd-macos-arm64.tar tool-openocd-esp32/openocd-macos-arm64
-          tar -cvf openocd-linux.tar tool-openocd-esp32/openocd-linux
-          tar -cvf openocd-windows.tar tool-openocd-esp32/openocd-windows
+          tar -zcf openocd-macos-x86.tar tool-openocd-esp32/openocd-macos-x86
+          tar -zcf openocd-macos-arm64.tar tool-openocd-esp32/openocd-macos-arm64
+          tar -zcf openocd-linux.tar tool-openocd-esp32/openocd-linux
+          tar -zcf openocd-windows.tar tool-openocd-esp32/openocd-windows
       - uses: jason2866/action-gh-release@v1.3
         with:
           tag_name: ${{ github.run_number }}
