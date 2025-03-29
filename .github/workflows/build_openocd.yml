@@ -68,13 +68,15 @@ jobs:
       - name: Download build OpenOCD binaries
         uses: actions/download-artifact@v4
         with:
+          path: openocd
           pattern: openocd-*
           merge-multiple: true
+      - run: ls -R openocd
       - uses: jason2866/action-gh-release@v1.3
         with:
           tag_name: ${{ github.run_number }}
           prerelease: true
           files: |
-            openocd-*
+            openocd/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
