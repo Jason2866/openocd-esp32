@@ -25,10 +25,6 @@
 #define ESP32C3_RTCCNTL_RESET_STATE_OFF         0x0038
 #define ESP32C3_RTCCNTL_RESET_STATE_REG         (ESP32C3_RTCCNTL_BASE + ESP32C3_RTCCNTL_RESET_STATE_OFF)
 
-#define ESP32C3_GPIO_BASE                       0x60004000
-#define ESP32C3_GPIO_STRAP_REG_OFF              0x0038
-#define ESP32C3_GPIO_STRAP_REG                  (ESP32C3_GPIO_BASE + ESP32C3_GPIO_STRAP_REG_OFF)
-
 #define ESP32C3_RTCCNTL_RESET_CAUSE_MASK        (BIT(6) - 1)
 #define ESP32C3_RESET_CAUSE(reg_val)            ((reg_val) & ESP32C3_RTCCNTL_RESET_CAUSE_MASK)
 
@@ -38,6 +34,11 @@
 
 /* ASSIST_DEBUG registers */
 #define ESP32C3_ASSIST_DEBUG_CPU0_MON_REG       0x600CE000
+
+#define ESP32C3_IRAM_LOW    0x4037C000
+#define ESP32C3_IRAM_HIGH   0x403E0000
+#define ESP32C3_DRAM_LOW    0x3FC80000
+#define ESP32C3_DRAM_HIGH   0x3FCE0000
 
 enum esp32c3_reset_reason {
 	ESP32C3_CHIP_POWER_ON_RESET      = 0x01,	/* Power on reset */
@@ -115,27 +116,25 @@ static void esp32c3_print_reset_reason(struct target *target, uint32_t reset_rea
 		esp32c3_get_reset_reason(reset_reason_reg_val));
 }
 
+static bool esp32c3_is_iram_address(target_addr_t addr)
+{
+	return addr >= ESP32C3_IRAM_LOW && addr < ESP32C3_IRAM_HIGH;
+}
+
+static bool esp32c3_is_dram_address(target_addr_t addr)
+{
+	return addr >= ESP32C3_DRAM_LOW && addr < ESP32C3_DRAM_HIGH;
+}
+
 static const struct esp_semihost_ops esp32c3_semihost_ops = {
 	.prepare = NULL,
 	.post_reset = esp_semihosting_post_reset
 };
 
 static const struct esp_flash_breakpoint_ops esp32c3_flash_brp_ops = {
+	.breakpoint_prepare = esp_algo_flash_breakpoint_prepare,
 	.breakpoint_add = esp_algo_flash_breakpoint_add,
-	.breakpoint_remove = esp_algo_flash_breakpoint_remove
-};
-
-static const char *esp32c3_existent_regs[] = {
-	"zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "t3", "t4", "t5", "t6",
-	"fp", "pc", "mstatus", "misa", "mtvec", "mscratch", "mepc", "mcause", "mtval", "priv",
-	"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
-	"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
-	"pmpcfg0", "pmpcfg1", "pmpcfg2", "pmpcfg3",
-	"pmpaddr0", "pmpaddr1", "pmpaddr2", "pmpaddr3", "pmpaddr4", "pmpaddr5", "pmpaddr6", "pmpaddr7",
-	"pmpaddr8", "pmpaddr9", "pmpaddr10", "pmpaddr11", "pmpaddr12", "pmpaddr13", "pmpaddr14", "pmpaddr15",
-	"tselect", "tdata1", "tdata2", "tcontrol", "dcsr", "dpc", "dscratch0", "dscratch1", "hpmcounter16",
-	/* custom exposed CSRs will start with 'csr_' prefix*/
-	"csr_mpcer", "csr_mpcmr", "csr_mpccr", "csr_cpu_gpio_oen", "csr_cpu_gpio_in", "csr_cpu_gpio_out",
+	.breakpoint_remove = esp_algo_flash_breakpoint_remove,
 };
 
 static int esp32c3_target_create(struct target *target, Jim_Interp *interp)
@@ -152,12 +151,14 @@ static int esp32c3_target_create(struct target *target, Jim_Interp *interp)
 	esp_riscv->max_bp_num = ESP32C3_BP_NUM;
 	esp_riscv->max_wp_num = ESP32C3_WP_NUM;
 
-	esp_riscv->gpio_strap_reg = ESP32C3_GPIO_STRAP_REG;
 	esp_riscv->rtccntl_reset_state_reg = ESP32C3_RTCCNTL_RESET_STATE_REG;
 	esp_riscv->print_reset_reason = &esp32c3_print_reset_reason;
-	esp_riscv->is_flash_boot = &esp_is_flash_boot;
-	esp_riscv->existent_regs = esp32c3_existent_regs;
-	esp_riscv->existent_regs_size = ARRAY_SIZE(esp32c3_existent_regs);
+	esp_riscv->existent_csrs = NULL;
+	esp_riscv->existent_csr_size = 0;
+	esp_riscv->existent_ro_csrs = NULL;
+	esp_riscv->existent_ro_csr_size = 0;
+	esp_riscv->is_dram_address = esp32c3_is_dram_address;
+	esp_riscv->is_iram_address = esp32c3_is_iram_address;
 
 	if (esp_riscv_alloc_trigger_addr(target) != ERROR_OK)
 		return ERROR_FAIL;
@@ -178,8 +179,7 @@ static int esp32c3_init_target(struct command_context *cmd_ctx,
 
 	struct esp_riscv_common *esp_riscv = target_to_esp_riscv(target);
 
-	ret = esp_riscv_init_arch_info(cmd_ctx,
-		target,
+	ret = esp_riscv_init_arch_info(target,
 		esp_riscv,
 		&esp32c3_flash_brp_ops,
 		&esp32c3_semihost_ops);
@@ -222,7 +222,7 @@ struct target_type esp32c3_target = {
 	.resume = esp_riscv_resume,
 	.step = riscv_openocd_step,
 
-	.assert_reset = riscv_assert_reset,
+	.assert_reset = esp_riscv_assert_reset,
 	.deassert_reset = riscv_deassert_reset,
 
 	.read_memory = esp_riscv_read_memory,

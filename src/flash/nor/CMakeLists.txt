@@ -22,8 +22,10 @@ target_sources(nor PRIVATE
 	cc26xx.c
 	cfi.c
 	dsp5680xx_flash.c
+	dw-spi.c
 	efm32.c
 	em357.c
+	eneispif.c
 	esp_flash.c
 	esp_xtensa.c
 	esp_riscv.c
@@ -32,7 +34,9 @@ target_sources(nor PRIVATE
 	esp32c2.c
 	esp32c3.c
 	esp32s3.c
+	esp32c5.c
 	esp32c6.c
+	esp32c61.c
 	esp32h2.c
 	esp32p4.c
 	esirisc_flash.c

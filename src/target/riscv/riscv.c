@@ -965,6 +965,8 @@ static struct match_triggers_tdata1_fields fill_match_triggers_tdata1_fields_t2(
 		},
 		.tdata1_ignore_mask = CSR_MCONTROL_MASKMAX(riscv_xlen(target))
 	};
+	if (r->trigger_match_result_fixup)
+		r->trigger_match_result_fixup(target, &result.tdata1_ignore_mask, false);
 	return result;
 }
 
@@ -974,6 +976,7 @@ static struct match_triggers_tdata1_fields fill_match_triggers_tdata1_fields_t6(
 	bool misa_s = riscv_supports_extension(target, 'S');
 	bool misa_u = riscv_supports_extension(target, 'U');
 	bool misa_h = riscv_supports_extension(target, 'H');
+	RISCV_INFO(r);
 
 	struct match_triggers_tdata1_fields result = {
 		.common =
@@ -1003,6 +1006,8 @@ static struct match_triggers_tdata1_fields fill_match_triggers_tdata1_fields_t6(
 		},
 		.tdata1_ignore_mask = 0
 	};
+	if (r->trigger_match_result_fixup)
+		r->trigger_match_result_fixup(target, &result.tdata1_ignore_mask, true);
 	return result;
 }
 
@@ -1446,7 +1451,8 @@ static int remove_trigger(struct target *target, int unique_id)
 		}
 	}
 	if (!done) {
-		LOG_TARGET_ERROR(target,
+		/* This is not an error for Espressif because of the flash breakpoints as a backup. */
+		LOG_TARGET_DEBUG(target,
 			"Couldn't find the hardware resources used by hardware trigger.");
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
@@ -1822,11 +1828,18 @@ static int set_debug_reason(struct target *target, enum riscv_halt_reason halt_r
 		case RISCV_HALT_TRIGGER:
 			if (riscv_hit_trigger_hit_bit(target, &r->trigger_hit) != ERROR_OK)
 				return ERROR_FAIL;
-			target->debug_reason = DBG_REASON_WATCHPOINT;
-			/* Check if we hit a hardware breakpoint. */
-			for (struct breakpoint *bp = target->breakpoints; bp; bp = bp->next) {
+			// riscv_hit_trigger_hit_bit() looks for fired trigger basing on mcontrol 'hit' bit.
+			// That bit is optional. GDB handles(steps over) BPs and watchpoints differently.
+			// ESPRESSIF: ESP32-C6 LP core does not implement this bit, we changed logic here
+			// and by default we assume that debug reason is DBG_REASON_BREAKPOINT
+			// instead of DBG_REASON_WATCHPOINT (as done in upstream).
+			// This should not change behaviour for the chips implementing mcontrol 'hit' bit,
+			// and fixes the problem with GDB behaviour for the chips which lacks support for it.
+			target->debug_reason = DBG_REASON_BREAKPOINT;
+			/* Check if we hit a hardware watchpoint. */
+			for (struct watchpoint *bp = target->watchpoints; bp; bp = bp->next) {
 				if (bp->unique_id == r->trigger_hit)
-					target->debug_reason = DBG_REASON_BREAKPOINT;
+					target->debug_reason = DBG_REASON_WATCHPOINT;
 			}
 			break;
 		case RISCV_HALT_INTERRUPT:
@@ -1905,6 +1918,11 @@ static int halt_go(struct target *target)
 
 static int halt_finish(struct target *target)
 {
+	RISCV_INFO(r);
+
+	if (r->pause_gdb_callbacks)
+		return ERROR_OK;
+
 	return target_call_event_callbacks(target, TARGET_EVENT_HALTED);
 }
 
@@ -2143,7 +2161,7 @@ int riscv_resume(
 
 	struct list_head *targets;
 
-	LIST_HEAD(single_target_list);
+	OOCD_LIST_HEAD(single_target_list);
 	struct target_list single_target_entry = {
 		.lh = {NULL, NULL},
 		.target = target
@@ -3054,6 +3072,11 @@ static int riscv_poll_hart(struct target *target, enum riscv_next_action *next_a
 						case SEMIHOSTING_WAITING:
 							/* This hart should remain halted. */
 							*next_action = RPH_REMAIN_HALTED;
+							/* ESPRESSIF */
+							if (target->smp && target->gdb_service) {
+								target->gdb_service->target = target;
+								target_call_event_callbacks(target, TARGET_EVENT_HALTED);
+							}
 							break;
 						case SEMIHOSTING_HANDLED:
 							/* This hart should be resumed, along with any other
@@ -3064,9 +3087,6 @@ static int riscv_poll_hart(struct target *target, enum riscv_next_action *next_a
 							return retval;
 					}
 				}
-
-				/* TODO: Espressif: replace with handle_became_halted event. */
-				r->on_halt(target);
 
 				if (r->handle_became_halted &&
 						r->handle_became_halted(target, previous_riscv_state) != ERROR_OK)
@@ -3170,7 +3190,7 @@ int riscv_openocd_poll(struct target *target)
 
 	struct list_head *targets;
 
-	LIST_HEAD(single_target_list);
+	OOCD_LIST_HEAD(single_target_list);
 	struct target_list single_target_entry = {
 		.lh = {NULL, NULL},
 		.target = target
@@ -3202,11 +3222,13 @@ int riscv_openocd_poll(struct target *target)
 			continue;
 
 		enum riscv_next_action next_action;
-		if (riscv_poll_hart(t, &next_action) != ERROR_OK)
+		if (riscv_poll_hart(t, &next_action) != ERROR_OK) {
 			LOG_TARGET_ERROR(target, "polling failed!");
+			break;
+		}
 		/* If we return ERROR_FAIL as the upstream does, it will abort in the next dmi_scan
 		 * This will prevent recovery when the target resets unexpectedly.
-		 * We need to try more until target reset has been done
+		 * We need to try more until the target reset has been done. (First target in SMP mode)
 		 * Espressif: Be careful here when comparing this to the upstream repo. !!!
 		 */
 		switch (next_action) {
@@ -3309,11 +3331,11 @@ int riscv_openocd_step(struct target *target, int current,
 
 	bool success = true;
 	uint64_t current_mstatus;
+	uint64_t irq_disabled_mask = MSTATUS_MIE | MSTATUS_HIE | MSTATUS_SIE | MSTATUS_UIE;
 	RISCV_INFO(info);
 
 	if (info->isrmask_mode == RISCV_ISRMASK_STEPONLY) {
 		/* Disable Interrupts before stepping. */
-		uint64_t irq_disabled_mask = MSTATUS_MIE | MSTATUS_HIE | MSTATUS_SIE | MSTATUS_UIE;
 		if (riscv_interrupts_disable(target, irq_disabled_mask,
 				&current_mstatus) != ERROR_OK) {
 			success = false;
@@ -3329,11 +3351,24 @@ int riscv_openocd_step(struct target *target, int current,
 
 	register_cache_invalidate(target->reg_cache);
 
-	if (info->isrmask_mode == RISCV_ISRMASK_STEPONLY)
+	if (info->isrmask_mode == RISCV_ISRMASK_STEPONLY) {
+		uint64_t new_mstatus;
+		if (riscv_get_register(target, &new_mstatus, GDB_REGNO_MSTATUS) != ERROR_OK) {
+			success = false;
+			LOG_TARGET_ERROR(target, "Unable to read mstatus after step");
+			goto _exit;
+		}
+		if (new_mstatus != (current_mstatus & ~irq_disabled_mask)) {
+			LOG_TARGET_DEBUG(target, "mstatus value changed while stepping, "
+					"only restoring interrupt enable bits.");
+			current_mstatus = new_mstatus | (current_mstatus & irq_disabled_mask);
+		}
+
 		if (riscv_interrupts_restore(target, current_mstatus) != ERROR_OK) {
 			success = false;
 			LOG_TARGET_ERROR(target, "Unable to restore interrupts.");
 		}
+	}
 
 _exit:
 	if (enable_triggers(target, trigger_state) != ERROR_OK) {
@@ -4270,8 +4305,7 @@ COMMAND_HANDLER(handle_repeat_read)
 	}
 	int result = r->read_memory(target, address, size, count, buffer, 0);
 	if (result == ERROR_OK) {
-		target_handle_md_output(cmd, target, address, size, count, buffer,
-			false);
+		target_handle_md_output(cmd, target, address, size, count, buffer);
 	}
 	free(buffer);
 	return result;
@@ -5038,7 +5072,6 @@ static int riscv_step_rtos_hart(struct target *target)
 	r->on_step(target);
 	if (r->step_current_hart(target) != ERROR_OK)
 		return ERROR_FAIL;
-	r->on_halt(target); /* ESPRESSIF */
 	if (target->state != TARGET_HALTED) {
 		LOG_TARGET_ERROR(target, "Hart was not halted after single step!");
 		return ERROR_FAIL;
@@ -5600,7 +5633,6 @@ static const char * const default_reg_names[GDB_REGNO_COUNT] = {
 	[GDB_REGNO_T5] = "t5",
 	[GDB_REGNO_T6] = "t6",
 	[GDB_REGNO_PC] = "pc",
-	[GDB_REGNO_CSR0] = "csr0",
 	[GDB_REGNO_PRIV] = "priv",
 	[GDB_REGNO_FT0] = "ft0",
 	[GDB_REGNO_FT1] = "ft1",
@@ -5699,7 +5731,8 @@ const char *gdb_regno_name(struct target *target, enum gdb_regno regno)
 	}
 	if (regno >= GDB_REGNO_CSR0 && regno <= GDB_REGNO_CSR4095) {
 		init_custom_csr_names(target);
-		info->reg_names[regno] = init_reg_name_with_prefix("csr", regno - GDB_REGNO_CSR0);
+		if (!info->reg_names[regno])
+			info->reg_names[regno] = init_reg_name_with_prefix("csr", regno - GDB_REGNO_CSR0);
 		return info->reg_names[regno];
 	}
 	assert(!"Encountered uninitialized entry in reg_names table");
@@ -5917,7 +5950,7 @@ int riscv_init_registers(struct target *target)
 		.type = REG_TYPE_ARCH_DEFINED,
 		.id = "FPU_FD",
 		.type_class = REG_TYPE_CLASS_UNION,
-		.reg_type_union = &single_double_union
+		{ .reg_type_union = &single_double_union }
 	};
 	static struct reg_data_type type_uint8 = { .type = REG_TYPE_UINT8, .id = "uint8" };
 	static struct reg_data_type type_uint16 = { .type = REG_TYPE_UINT16, .id = "uint16" };

@@ -4,7 +4,6 @@
  *   RiscV specific flasher stub functions                                 *
  *   Copyright (C) 2023 Espressif Systems Ltd.                             *
  ***************************************************************************/
-#include <soc/spi_mem_reg.h>
 #include <stub_flasher.h>
 #include <stub_flasher_chip.h>
 #include <stub_flasher_int.h>
@@ -111,5 +110,10 @@ uint32_t stub_get_break_insn(uint8_t insn_sz)
 uint8_t stub_get_insn_size(uint8_t *insn)
 {
 	/* we use 16bit `c.ebreak`. it works perfectly with either 32bit and 16bit code */
+	return 2;
+}
+
+uint8_t stub_get_max_insn_size(void)
+{
 	return 2;
 }

@@ -220,8 +220,6 @@ struct riscv_info {
 	/* Called periodically (no guarantees about frequency), while there's
 	 * nothing else going on. */
 	int (*tick)(struct target *target);
-	/* ESPRESSIF */
-	int (*on_halt)(struct target *target);
 	/* Indicates that target was reset.*/
 	int (*on_reset)(struct target *target);
 	/****************/
@@ -321,6 +319,10 @@ struct riscv_info {
 	bool enable_equality_match_trigger;
 	bool enable_napot_trigger;
 	bool enable_ge_lt_trigger;
+
+	/* ESPRESSIF */
+	bool pause_gdb_callbacks; /* We use this flag to avoid sending internal halt events to GDB. OCD-749 */
+	void (*trigger_match_result_fixup)(struct target *target, riscv_reg_t *tdata1_ignore_mask, bool t6);
 };
 
 COMMAND_HELPER(riscv_print_info_line, const char *section, const char *key,

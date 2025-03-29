@@ -15,7 +15,9 @@ STUB_COMMON_PATH := $(STUB_CHIP_PATH)/..
 STUB_CHIP_ARCH_PATH := $(STUB_COMMON_PATH)/$(STUB_ARCH)
 STUB_OBJ_DEPS := sdkconfig.h
 STUB_LD_SCRIPT := stub.ld
-STUB_CHIP := ESP32C2
+STUB_IDF_BIN_LD_SCRIPT := stub.ld
+STUB_STACK_SIZE := 512
+STUB_CHIP := esp32c2
 
 SRCS := $(IDF_PATH)/components/esp_hw_support/port/esp32c2/rtc_clk_init.c \
 		$(IDF_PATH)/components/esp_hw_support/port/esp32c2/rtc_clk.c \
@@ -24,15 +26,19 @@ SRCS := $(IDF_PATH)/components/esp_hw_support/port/esp32c2/rtc_clk_init.c \
 		$(IDF_PATH)/components/app_trace/port/$(STUB_ARCH)/port.c
 
 CFLAGS := -std=gnu17
+CFLAGS += -Wno-dangling-pointer
 
 INCLUDES := -I$(IDF_PATH)/components/soc/esp32c2/include -I$(IDF_PATH)/components/riscv/include \
 	-I$(IDF_PATH)/components/hal/esp32c2/include -I$(IDF_PATH)/components/esp32c2/include \
 	-I$(IDF_PATH)/components/esp_hw_support/port/esp32c2/private_include \
 	-I$(IDF_PATH)/components/esp_rom/include/esp32c2 \
 	-I$(IDF_PATH)/components/esp_hw_support/port/esp32c2 \
+	-I$(IDF_PATH)/components/esp_hw_support/port/esp32c2/include \
 	-I$(IDF_PATH)/components/spi_flash/include \
 	-I$(IDF_PATH)/components/hal/esp32c2/include \
-	-I$(IDF_PATH)/components/esp_rom/esp32c2
+	-I$(IDF_PATH)/components/esp_rom/esp32c2 \
+	-I$(IDF_PATH)/components/esp_rom/esp32c2/include \
+	-I$(IDF_PATH)/components/esp_rom/esp32c2/include/esp32c2
 
 DEFINES :=
 

@@ -31,15 +31,19 @@ static const struct flash_driver * const flash_drivers[] = {
 	&cc26xx_flash,
 	&cfi_flash,
 	&dsp5680xx_flash,
+	&dw_spi_flash,
 	&efm32_flash,
 	&em357_flash,
+	&eneispif_flash,
 	&esirisc_flash,
 	&esp32_flash,
 	&esp32s2_flash,
 	&esp32c2_flash,
 	&esp32h2_flash,
 	&esp32c3_flash,
+	&esp32c5_flash,
 	&esp32c6_flash,
+	&esp32c61_flash,
 	&esp32s3_flash,
 	&esp32p4_flash,
 	&faux_flash,
@@ -98,7 +102,7 @@ static const struct flash_driver * const flash_drivers[] = {
 
 const struct flash_driver *flash_driver_find_by_name(const char *name)
 {
-	for (unsigned i = 0; flash_drivers[i]; i++) {
+	for (unsigned int i = 0; flash_drivers[i]; i++) {
 		if (strcmp(name, flash_drivers[i]->name) == 0)
 			return flash_drivers[i];
 	}

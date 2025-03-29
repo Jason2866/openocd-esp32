@@ -303,7 +303,7 @@ struct target_type {
 	/* Return the number of address bits this target supports. This will
 	 * typically be 32 for 32-bit targets, and 64 for 64-bit targets. If not
 	 * implemented, it's assumed to be 32. */
-	unsigned (*address_bits)(struct target *target);
+	unsigned int (*address_bits)(struct target *target);
 
 	/* Return the number of system bus data bits this target supports. This
 	 * will typically be 32 for 32-bit targets, and 64 for 64-bit targets. If
@@ -339,6 +339,8 @@ extern struct target_type esp32h2_target;
 extern struct target_type esp32c3_target;
 extern struct target_type esp32c6_target;
 extern struct target_type esp32p4_target;
+extern struct target_type esp32c5_target;
+extern struct target_type esp32c61_target;
 extern struct target_type fa526_target;
 extern struct target_type feroceon_target;
 extern struct target_type hla_target;

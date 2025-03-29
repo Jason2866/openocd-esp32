@@ -19,7 +19,7 @@
 #include "stub_logger.h"
 #include "stub_flasher_int.h"
 
-#define STUB_DEBUG      0
+#include "mcu_boot.h"
 
 #if STUB_LOG_ENABLE == 1
 	#define STUB_BENCH(var)	\
@@ -30,6 +30,44 @@
 #endif
 
 #define STUB_BP_INSN_SECT_BUF_SIZE        (2 * STUB_FLASH_SECTOR_SIZE)
+
+#define CHECKSUM_ALIGN        16
+#define IS_PADD(addr) ((addr) == 0)
+#define IS_DRAM(addr) ((addr) >= SOC_DRAM_LOW && (addr) < SOC_DRAM_HIGH)
+#define IS_IRAM(addr) ((addr) >= SOC_IRAM_LOW && (addr) < SOC_IRAM_HIGH)
+#define IS_IROM(addr) ((addr) >= SOC_IROM_LOW && (addr) < SOC_IROM_HIGH)
+#define IS_DROM(addr) ((addr) >= SOC_DROM_LOW && (addr) < SOC_DROM_HIGH)
+#define IS_SRAM(addr) (IS_IRAM(addr) || IS_DRAM(addr))
+#define IS_MMAP(addr) (IS_IROM(addr) || IS_DROM(addr))
+#if SOC_RTC_FAST_MEM_SUPPORTED
+# define IS_RTC_FAST_IRAM(addr) \
+					((addr) >= SOC_RTC_IRAM_LOW && (addr) < SOC_RTC_IRAM_HIGH)
+#define IS_RTC_FAST_DRAM(addr) \
+					((addr) >= SOC_RTC_DRAM_LOW && (addr) < SOC_RTC_DRAM_HIGH)
+#else
+#define IS_RTC_FAST_IRAM(addr) 0
+#define IS_RTC_FAST_DRAM(addr) 0
+#endif
+#if SOC_RTC_SLOW_MEM_SUPPORTED
+#define IS_RTC_SLOW_DRAM(addr) \
+					((addr) >= SOC_RTC_DATA_LOW && (addr) < SOC_RTC_DATA_HIGH)
+#else
+#define IS_RTC_SLOW_DRAM(addr) 0
+#endif
+
+#if SOC_MEM_TCM_SUPPORTED
+#define IS_TCM(addr) ((addr) >= SOC_TCM_LOW && (addr) < SOC_TCM_HIGH)
+#else
+#define IS_TCM(addr) 0
+#endif
+
+#define IS_NONE(addr) (!IS_IROM(addr) && !IS_DROM(addr) \
+					&& !IS_IRAM(addr) && !IS_DRAM(addr) \
+					&& !IS_RTC_FAST_IRAM(addr) && !IS_RTC_FAST_DRAM(addr) \
+					&& !IS_RTC_SLOW_DRAM(addr) && !IS_TCM(addr) \
+					&& !IS_PADD(addr))
+
+#define MAX_SEGMENT_COUNT 16
 
 extern void stub_sha256_start(void);
 extern void stub_sha256_data(const void *data, size_t data_len);
@@ -68,6 +106,16 @@ static struct {
 
 static uint32_t s_encrypt_binary;
 
+const struct esp_flash_stub_desc __attribute__((section(".stub_desc")))  s_esp_stub_desc = {
+	.magic = ESP_STUB_FLASHER_MAGIC_NUM,
+	.stub_version = ESP_STUB_FLASHER_VERSION,
+#ifdef CMD_FLASH_IDF_BINARY
+	.idf_key = ESP_STUB_FLASHER_IDF_KEY,
+#else
+	.idf_key = 0x00,
+#endif
+};
+
 /* used in app trace module */
 uint32_t esp_log_early_timestamp(void)
 {
@@ -100,7 +148,7 @@ BaseType_t xPortEnterCriticalTimeout(portMUX_TYPE *mux, BaseType_t timeout)
 	return (BaseType_t)1;
 }
 
-#if STUB_DEBUG
+#if CMD_FLASH_TEST
 static int stub_flash_test(void)
 {
 	int ret = ESP_STUB_ERR_OK;
@@ -145,7 +193,7 @@ static int stub_apptrace_init(void)
 	return stub_apptrace_prepare();
 }
 
-static int stub_flash_calc_hash(uint32_t addr, uint32_t size, uint8_t *hash)
+static __maybe_unused int stub_flash_calc_hash(uint32_t addr, uint32_t size, uint8_t *hash)
 {
 	esp_rom_spiflash_result_t rc;
 	uint32_t rd_cnt = 0, rd_sz = 0;
@@ -176,7 +224,7 @@ static int stub_flash_calc_hash(uint32_t addr, uint32_t size, uint8_t *hash)
 	return ESP_STUB_ERR_OK;
 }
 
-static int stub_flash_read(uint32_t addr, uint32_t size)
+static __maybe_unused int stub_flash_read(uint32_t addr, uint32_t size)
 {
 	esp_rom_spiflash_result_t rc;
 	uint32_t total_cnt = 0;
@@ -372,7 +420,7 @@ static int stub_write_aligned_buffer(void *data_buf, uint32_t length)
 	return ESP_STUB_ERR_OK;
 }
 
-static int stub_flash_write(void *args)
+static __maybe_unused int stub_flash_write(void *args)
 {
 	uint32_t total_cnt = 0;
 	uint8_t *buf = NULL;
@@ -535,7 +583,7 @@ static int stub_run_inflator(void *data_buf, uint32_t length)
 	return ESP_STUB_ERR_OK;
 }
 
-static int stub_flash_write_deflated(void *args)
+static __maybe_unused int stub_flash_write_deflated(void *args)
 {
 	uint32_t total_cnt = 0;
 	uint8_t *buf = NULL;
@@ -643,7 +691,6 @@ esp_rom_spiflash_result_t esp_rom_spiflash_erase_area(uint32_t start_addr, uint3
 	total_sector_num = area_len % g_rom_flashchip.sector_size == 0 ?
 		area_len / g_rom_flashchip.sector_size :
 		1 + (area_len / g_rom_flashchip.sector_size);
-
 	/* check if erase area reach over block boundary */
 	head_sector_num = sector_num_per_block - (sector_no % sector_num_per_block);
 	head_sector_num = head_sector_num >= total_sector_num ? total_sector_num : head_sector_num;
@@ -651,6 +698,8 @@ esp_rom_spiflash_result_t esp_rom_spiflash_erase_area(uint32_t start_addr, uint3
 	/* JJJ, BUG of 6.0 erase
 	 * middle part of area is aligned by blocks */
 	total_sector_num -= head_sector_num;
+
+	STUB_LOGD("tsn:%d hsn:%d sn:%d snpb:%d\n", total_sector_num, head_sector_num, sector_no, sector_num_per_block);
 
 	/* head part of area is erased */
 	while (head_sector_num > 0) {
@@ -678,7 +727,7 @@ esp_rom_spiflash_result_t esp_rom_spiflash_erase_area(uint32_t start_addr, uint3
 	return ESP_ROM_SPIFLASH_RESULT_OK;
 }
 
-static int stub_flash_erase(uint32_t flash_addr, uint32_t size)
+static __maybe_unused int stub_flash_erase(uint32_t flash_addr, uint32_t size)
 {
 	int ret = ESP_STUB_ERR_OK;
 
@@ -702,7 +751,7 @@ static int stub_flash_erase(uint32_t flash_addr, uint32_t size)
 	return ret;
 }
 
-static int stub_flash_erase_check(uint32_t start_sec, uint32_t sec_num, uint8_t *sec_erased)
+static __maybe_unused int stub_flash_erase_check(uint32_t start_sec, uint32_t sec_num, uint8_t *sec_erased)
 {
 	int ret = ESP_STUB_ERR_OK;
 	uint8_t buf[STUB_FLASH_SECTOR_SIZE / 8];/* implying that sector size is multiple of sizeof(buf) */
@@ -786,76 +835,165 @@ static uint32_t stub_flash_get_size(void)
 	return size;
 }
 
-static inline bool stub_flash_should_map(uint32_t load_addr)
+union stub_image_header {
+	struct {
+		uint8_t esp_magic;
+		uint8_t segment_count;
+	};
+	uint32_t mcuboot_magic;
+};
+
+/* Mcu Boot Image Layout
+ * mcuboot_hdr: org = 0x0,  len = 0x20 (magic 0x96f3b83d)
+ * metadata:    org = 0x20, len = 0x60 (magic 0xace637d3)
+ * FLASH:       org = 0x80, len = FLASH_SIZE - 0x80
+*/
+static int stub_flash_get_mcuboot_mappings(uint32_t off, struct esp_flash_mapping *flash_map)
 {
-	return (load_addr >= SOC_IROM_LOW && load_addr < SOC_IROM_HIGH)
-		|| (load_addr >= SOC_DROM_LOW && load_addr < SOC_DROM_HIGH);
+	esp_program_header_t prg_hdr;
+	esp_rom_spiflash_result_t rc = stub_flash_read_buff(off + MCU_BOOT_HEADER_SIZE,
+		(uint32_t *)&prg_hdr, sizeof(prg_hdr));
+	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
+		STUB_LOGE("Failed to read mcuboot header\n");
+		return ESP_STUB_ERR_READ_APP_IMAGE_HEADER;
+	}
+
+	if (prg_hdr.header_magic != MCU_BOOT_PROGRAM_HEADER_MAGIC) {
+		STUB_LOGE("Invalid magic number 0x%x\n", prg_hdr.header_magic);
+		return ESP_STUB_ERR_INVALID_APP_MAGIC;
+	}
+
+	if (!IS_DROM(prg_hdr.drom_map_addr) || !IS_IROM(prg_hdr.irom_map_addr)) {
+		STUB_LOGE("Invalid DROM/IROM addr (0x%x)/(0x%x)\n",
+			prg_hdr.drom_map_addr, prg_hdr.irom_map_addr);
+		return ESP_STUB_ERR_FAIL;
+	}
+
+	flash_map->maps[0].phy_addr = prg_hdr.drom_flash_offset + off;
+	flash_map->maps[0].load_addr = prg_hdr.drom_map_addr;
+	flash_map->maps[0].size = prg_hdr.drom_size;
+	flash_map->maps[1].phy_addr = prg_hdr.irom_flash_offset + off;
+	flash_map->maps[1].load_addr = prg_hdr.irom_map_addr;
+	flash_map->maps[1].size = prg_hdr.irom_size;
+	flash_map->maps_num = 2;
+
+	for (unsigned int map_num = 0; map_num < 2; ++map_num)
+		STUB_LOGI("Mapped segment %d: %d bytes @ 0x%x -> 0x%x\n",
+			map_num,
+			flash_map->maps[map_num].size,
+			flash_map->maps[map_num].phy_addr,
+			flash_map->maps[map_num].load_addr);
+
+	return ESP_STUB_ERR_OK;
 }
 
 static int stub_flash_get_app_mappings(uint32_t off, struct esp_flash_mapping *flash_map)
 {
-	esp_image_header_t img_hdr;
+	union stub_image_header stub_img_hdr;
 	uint16_t maps_num = 0;
+	bool padding_checksum = false;
+	unsigned int ram_segments = 0;
 
-	esp_rom_spiflash_result_t rc =
-		stub_flash_read_buff(off, (uint32_t *)&img_hdr, sizeof(img_hdr));
+	/* clear the flash mappings */
+	for (int i = 0; i < ESP_STUB_FLASH_MAPPINGS_MAX_NUM; i++)
+		flash_map->maps[i].load_addr = 0;
+
+	esp_rom_spiflash_result_t rc = stub_flash_read_buff(off, &stub_img_hdr, sizeof(stub_img_hdr));
 	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
-		STUB_LOGE("Failed to read app image header (%d)!\n", rc);
-		return ESP_STUB_ERR_FAIL;
+		STUB_LOGE("Failed to read magic byte!\n");
+		return ESP_STUB_ERR_READ_APP_IMAGE_HEADER;
 	}
-	if (img_hdr.magic != ESP_IMAGE_HEADER_MAGIC) {
-		STUB_LOGE("Invalid magic number 0x%x in app image!\n", img_hdr.magic);
+
+	if (stub_img_hdr.mcuboot_magic == MCU_BOOT_HEADER_MAGIC) {
+		STUB_LOGI("Mcu boot header found\n");
+		return stub_flash_get_mcuboot_mappings(off, flash_map);
+	}
+
+	if (stub_img_hdr.esp_magic != ESP_IMAGE_HEADER_MAGIC) {
+		STUB_LOGE("Invalid magic number 0x%x\n", stub_img_hdr.esp_magic);
 		return ESP_STUB_ERR_INVALID_APP_MAGIC;
 	}
 
-	STUB_LOGI("Found app image: magic 0x%x, %d segments, entry @ 0x%x\n",
-		img_hdr.magic,
-		img_hdr.segment_count,
-		img_hdr.entry_addr);
-	uint32_t flash_addr = off + sizeof(img_hdr);
-	for (int k = 0; k < img_hdr.segment_count; k++) {
+	STUB_LOGI("Found app image: magic 0x%x, %d segments\n",
+		stub_img_hdr.esp_magic,
+		stub_img_hdr.segment_count);
+
+	uint32_t flash_addr = off + sizeof(esp_image_header_t);
+
+	for (int k = 0; k < MAX_SEGMENT_COUNT; k++) {
 		esp_image_segment_header_t seg_hdr;
 		rc = stub_flash_read_buff(flash_addr, (uint32_t *)&seg_hdr, sizeof(seg_hdr));
 		if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
 			STUB_LOGE("Failed to read app segment header (%d)!\n", rc);
-			return ESP_STUB_ERR_FAIL;
+			return ESP_STUB_ERR_READ_APP_SEGMENT;
 		}
 		STUB_LOGI("App segment %d: %d bytes @ 0x%x\n",
 			k,
 			seg_hdr.data_len,
 			seg_hdr.load_addr);
-		if (stub_flash_should_map(seg_hdr.load_addr)) {
+
+		if (IS_NONE(seg_hdr.load_addr))
+			break;
+
+		if (IS_RTC_FAST_IRAM(seg_hdr.load_addr) || IS_RTC_FAST_DRAM(seg_hdr.load_addr) ||
+			IS_RTC_SLOW_DRAM(seg_hdr.load_addr) || IS_TCM(seg_hdr.load_addr))
+			ram_segments++;
+
+		if (IS_MMAP(seg_hdr.load_addr)) {
 			STUB_LOGI("Mapped segment %d: %d bytes @ 0x%x -> 0x%x\n",
 				maps_num,
 				seg_hdr.data_len,
 				flash_addr + sizeof(seg_hdr),
 				seg_hdr.load_addr);
-			if (maps_num < ESP_STUB_FLASH_MAPPINGS_MAX_NUM) {
-				flash_map->maps[maps_num].phy_addr = flash_addr + sizeof(seg_hdr);
-				flash_map->maps[maps_num].load_addr = seg_hdr.load_addr;
-				flash_map->maps[maps_num].size = seg_hdr.data_len;
-				maps_num++;
-			} else {
+
+			/*
+			 * Make sure DROM mapping will be at the first index. (OpenOCD expects DROM mapping at index 0)
+			 * Note: New targets have identical IROM/DROM address. Thats why additional check is needed.
+			 */
+			int index = IS_DROM(seg_hdr.load_addr) && !flash_map->maps[0].load_addr ? 0 : 1;
+			flash_map->maps[index].phy_addr = flash_addr + sizeof(seg_hdr);
+			flash_map->maps[index].load_addr = seg_hdr.load_addr;
+			flash_map->maps[index].size = seg_hdr.data_len;
+			maps_num++;
+
+			if (maps_num >= ESP_STUB_FLASH_MAPPINGS_MAX_NUM)
+				/* No need to read more. DROM, IROM mapping is done */
 				break;
-			}
 		}
+
+		if (IS_SRAM(seg_hdr.load_addr))
+			ram_segments++;
+
 		flash_addr += sizeof(seg_hdr) + seg_hdr.data_len;
+		if (ram_segments == stub_img_hdr.segment_count && !padding_checksum) {
+			/* add padding */
+			flash_addr += CHECKSUM_ALIGN - (flash_addr % CHECKSUM_ALIGN);
+			padding_checksum = true;
+		}
 	}
 	flash_map->maps_num = maps_num;
 	return ESP_STUB_ERR_OK;
 }
 
-static int stub_flash_get_map(uint32_t app_off, uint32_t maps_addr)
+static __maybe_unused int stub_flash_get_map(uint32_t app_off, uint32_t maps_addr, uint32_t flash_size)
 {
 	esp_rom_spiflash_result_t rc;
 	esp_partition_info_t part;
-	struct esp_flash_mapping *flash_map = (struct esp_flash_mapping *)maps_addr;
-	uint32_t flash_size = stub_flash_get_size();
+	struct esp_stub_flash_map *flash_map = (struct esp_stub_flash_map *)maps_addr;
+
+	flash_map->flash_size = flash_size;
+	if (flash_size == 0) {
+		flash_map->retcode = ESP_STUB_ERR_FLASH_SIZE;
+		return ESP_STUB_ERR_OK;
+	}
 
 	STUB_LOGD("%s: 0x%x 0x%x\n", __func__, app_off, maps_addr);
-	flash_map->maps_num = 0;
-	if (app_off != (uint32_t)-1)
-		return stub_flash_get_app_mappings(app_off, flash_map);
+	flash_map->retcode = ESP_STUB_ERR_OK;
+	flash_map->map.maps_num = 0;
+	if (app_off != (uint32_t)-1) {
+		flash_map->retcode = stub_flash_get_app_mappings(app_off, &flash_map->map);
+		return ESP_STUB_ERR_OK;
+	}
 
 	for (uint32_t i = 0;; i++) {
 		rc = stub_flash_read_buff(ESP_PARTITION_TABLE_OFFSET + i * sizeof(esp_partition_info_t),
@@ -863,11 +1001,13 @@ static int stub_flash_get_map(uint32_t app_off, uint32_t maps_addr)
 				sizeof(part));
 		if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
 			STUB_LOGE("Failed to read partitions table entry (%d)!\n", rc);
-			return ESP_STUB_ERR_FAIL;
+			flash_map->retcode = ESP_STUB_ERR_READ_PARTITION;
+			return ESP_STUB_ERR_OK;
 		}
 		if (part.magic != ESP_PARTITION_MAGIC) {
 			STUB_LOGE("Invalid partition table magic! (0x%x)\n", part.magic);
-			return ESP_STUB_ERR_INVALID_IMAGE;
+			flash_map->retcode = ESP_STUB_ERR_INVALID_IMAGE;
+			return ESP_STUB_ERR_OK;
 		}
 		if (part.pos.offset > flash_size || part.pos.offset + part.pos.size > flash_size) {
 			STUB_LOGE("Partition %d invalid - offset 0x%x size 0x%x exceeds flash chip size 0x%x\n",
@@ -875,7 +1015,8 @@ static int stub_flash_get_map(uint32_t app_off, uint32_t maps_addr)
 				part.pos.offset,
 				part.pos.size,
 				flash_size);
-			return ESP_STUB_ERR_INVALID_PARTITION;
+			flash_map->retcode = ESP_STUB_ERR_INVALID_PARTITION;
+			return ESP_STUB_ERR_OK;
 		}
 		STUB_LOGD("Found partition %d, m 0x%x, t 0x%x, st 0x%x, l '%s'\n",
 			i,
@@ -888,11 +1029,25 @@ static int stub_flash_get_map(uint32_t app_off, uint32_t maps_addr)
 				part.label,
 				part.pos.size / 1024,
 				part.pos.offset);
-			return stub_flash_get_app_mappings(part.pos.offset, flash_map);
+			flash_map->retcode = stub_flash_get_app_mappings(part.pos.offset, &flash_map->map);
+			return ESP_STUB_ERR_OK;
 		}
 	}
 	/* PART_TYPE_APP not found */
 	return ESP_STUB_ERR_OK;
+}
+
+#define ALIGN_DOWN(x, a)        ((x) & ~((typeof(x))(a) - 1))
+
+static size_t stub_get_inst_buff_size(uint32_t bp_flash_addr, uint8_t inst_size)
+{
+	int sector_no = ALIGN_DOWN(bp_flash_addr, STUB_FLASH_SECTOR_SIZE) / STUB_FLASH_SECTOR_SIZE;
+	int next_sector_no = ALIGN_DOWN(bp_flash_addr + inst_size, STUB_FLASH_SECTOR_SIZE) / STUB_FLASH_SECTOR_SIZE;
+	size_t buff_size = STUB_FLASH_SECTOR_SIZE;
+	if (next_sector_no > sector_no)
+		buff_size *= 2;
+	STUB_LOGD("%s: %d %d 0x%x\n", __func__, sector_no, next_sector_no, buff_size);
+	return buff_size;
 }
 
 /**
@@ -903,25 +1058,25 @@ static int stub_flash_get_map(uint32_t app_off, uint32_t maps_addr)
 *   - crossing 4 bytes alignment boundary
 * 3) addr is unaligned to 4 bytes, BP is crossing sector's boundary (in 2 sectors)
 */
-static uint8_t stub_flash_set_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr, uint8_t *insn_sect)
+static __maybe_unused uint8_t stub_flash_set_bp(uint32_t bp_flash_addr,
+	uint32_t insn_buf_addr, uint8_t *insn_sect)
 {
 	esp_rom_spiflash_result_t rc;
+	const size_t inst_buff_size = stub_get_inst_buff_size(bp_flash_addr, stub_get_max_insn_size());
 
 	STUB_LOGD("%s: 0x%x 0x%x\n", __func__, bp_flash_addr, insn_buf_addr);
 
 	stub_flash_cache_flush();
 
-	rc = stub_flash_read_buff(bp_flash_addr & ~(STUB_FLASH_SECTOR_SIZE - 1),
+	rc = stub_flash_read_buff(ALIGN_DOWN(bp_flash_addr, STUB_FLASH_SECTOR_SIZE),
 		(uint32_t *)insn_sect,
-		STUB_BP_INSN_SECT_BUF_SIZE);
+		inst_buff_size);
 	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
 		STUB_LOGE("Failed to read insn sector (%d)!\n", rc);
 		return 0;
 	}
 	uint8_t insn_sz = stub_get_insn_size(&insn_sect[bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1)]);
-	memcpy((void *)insn_buf_addr,
-		&insn_sect[(bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1))],
-		insn_sz);
+	memcpy((void *)insn_buf_addr, &insn_sect[(bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1))], insn_sz);
 	STUB_LOGI("Read insn [%02x %02x %02x %02x] %d bytes @ 0x%x\n",
 		insn_sect[(bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1)) + 0],
 		insn_sect[(bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1)) + 1],
@@ -931,7 +1086,7 @@ static uint8_t stub_flash_set_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr,
 		bp_flash_addr);
 
 	/* this will erase full sector or two */
-	if (stub_flash_erase(bp_flash_addr, insn_sz) != ESP_STUB_ERR_OK) {
+	if (stub_flash_erase(bp_flash_addr, inst_buff_size) != ESP_STUB_ERR_OK) {
 		STUB_LOGE("Failed to erase insn sector!\n");
 		return 0;
 	}
@@ -948,7 +1103,7 @@ static uint8_t stub_flash_set_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr,
 		insn_sect[(bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1)) + 3] = break_insn.d8[3];
 	rc = stub_spiflash_write(bp_flash_addr & ~(STUB_FLASH_SECTOR_SIZE - 1),
 		(uint32_t *)insn_sect,
-		STUB_BP_INSN_SECT_BUF_SIZE,
+		inst_buff_size,
 		stub_get_flash_encryption_mode() != ESP_FLASH_ENC_MODE_DISABLED);
 	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
 		STUB_LOGE("Failed to write break insn (%d)!\n", rc);
@@ -982,10 +1137,40 @@ static uint8_t stub_flash_set_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr,
 	return insn_sz;
 }
 
-static int stub_flash_clear_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr, uint8_t *insn_sect)
+/*
+ * This function combines multiple flash addresses and instructions into a single buffer.
+ * The following variables are used:
+ * bp_flash_addr --> bp0_flash_addr + bp1_flash_addr + bp2_flash_addr + ... + bpn_flash_addr
+ * insn_buf_addr <-- insn_sz0 + inst0 + insn_sz1 + inst1 + insn_sz2 + inst2 + ... + insn_szn + instn
+ *
+ * Each bp_flash_addr is 4 bytes long.
+ * Each insn_sz is 1 byte long, representing the size of the corresponding instruction. (2 or 3)
+ * Each inst is 3 bytes long.
+ *
+ */
+static __maybe_unused uint8_t stub_flash_set_bp_multi(uint32_t *bp_flash_addr,
+	uint8_t *insn_buf_addr, uint8_t *insn_sect, uint32_t num_bps)
+{
+	STUB_LOGD("%s %d bps\n", __func__, num_bps);
+
+	struct esp_flash_stub_bp_instructions *bp_insts = (struct esp_flash_stub_bp_instructions *)insn_buf_addr;
+	for (size_t i = 0; i < num_bps; ++i) {
+		uint8_t rc = stub_flash_set_bp(bp_flash_addr[i], (uint32_t)&bp_insts[i].buff, insn_sect);
+		if (rc == 0)
+			return rc;
+		bp_insts[i].size = rc;
+	}
+
+	return num_bps * sizeof(struct esp_flash_stub_bp_instructions);
+}
+
+static __maybe_unused int stub_flash_clear_bp(uint32_t bp_flash_addr,
+	uint32_t insn_buf_addr, uint8_t *insn_sect)
 {
 	esp_rom_spiflash_result_t rc;
 	uint8_t *insn = (uint8_t *)insn_buf_addr;
+	uint8_t insn_sz = stub_get_insn_size(insn);
+	const size_t inst_buff_size = stub_get_inst_buff_size(bp_flash_addr, insn_sz);
 
 	STUB_LOGD("%s: 0x%x 0x%x [%02x %02x %02x %02x]\n",
 		__func__,
@@ -998,16 +1183,16 @@ static int stub_flash_clear_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr, u
 
 	stub_flash_cache_flush();
 
-	rc = stub_flash_read_buff(bp_flash_addr & ~(STUB_FLASH_SECTOR_SIZE - 1),
+	rc = stub_flash_read_buff(ALIGN_DOWN(bp_flash_addr, STUB_FLASH_SECTOR_SIZE),
 		(uint32_t *)insn_sect,
-		STUB_BP_INSN_SECT_BUF_SIZE);
+		inst_buff_size);
 	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
 		STUB_LOGE("Failed to read insn sector (%d)!\n", rc);
 		return ESP_STUB_ERR_FAIL;
 	}
-	uint8_t insn_sz = stub_get_insn_size(insn);
+
 	/* this will erase full sector or two */
-	if (stub_flash_erase(bp_flash_addr, insn_sz) != ESP_STUB_ERR_OK) {
+	if (stub_flash_erase(bp_flash_addr, inst_buff_size) != ESP_STUB_ERR_OK) {
 		STUB_LOGE("Failed to erase insn sector!\n");
 		return ESP_STUB_ERR_FAIL;
 	}
@@ -1019,7 +1204,7 @@ static int stub_flash_clear_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr, u
 		insn_sect[(bp_flash_addr & (STUB_FLASH_SECTOR_SIZE - 1)) + 3] = insn[3];
 	rc = stub_spiflash_write(bp_flash_addr & ~(STUB_FLASH_SECTOR_SIZE - 1),
 		(uint32_t *)insn_sect,
-		STUB_BP_INSN_SECT_BUF_SIZE,
+		inst_buff_size,
 		stub_get_flash_encryption_mode() != ESP_FLASH_ENC_MODE_DISABLED);
 	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
 		STUB_LOGE("Failed to restore insn (%d)!\n", rc);
@@ -1053,13 +1238,30 @@ static int stub_flash_clear_bp(uint32_t bp_flash_addr, uint32_t insn_buf_addr, u
 	return ESP_STUB_ERR_OK;
 }
 
+static __maybe_unused uint8_t stub_flash_clear_bp_multi(uint32_t *bp_flash_addr,
+	uint8_t *insn_buf_addr, uint8_t *insn_sect, uint32_t num_bps)
+{
+	STUB_LOGD("%s %d bps\n", __func__, num_bps);
+
+	struct esp_flash_stub_bp_instructions *bp_insts = (struct esp_flash_stub_bp_instructions *)insn_buf_addr;
+
+	for (size_t i = 0; i < num_bps; ++i) {
+		int rc = stub_flash_clear_bp(bp_flash_addr[i], (uint32_t)&bp_insts[i].buff, insn_sect);
+		if (rc < 0)
+			return rc;
+	}
+
+	return ESP_STUB_ERR_OK;
+}
+
 static int stub_flash_handler(int cmd, va_list ap)
 {
 	int ret = ESP_STUB_ERR_OK;
 	struct stub_flash_state flash_state;
-	uint32_t arg1 = va_arg(ap, uint32_t);	/* flash_addr, start_sect */
-	uint32_t arg2 = va_arg(ap, uint32_t);	/* number of sectors */
-	uint8_t *arg3 = va_arg(ap, uint8_t *);	/* sectors' state buf address */
+	uint32_t arg1 __maybe_unused = va_arg(ap, uint32_t);  /* flash_addr, start_sect */
+	uint32_t arg2 __maybe_unused = va_arg(ap, uint32_t);	/* number of sectors */
+	uint8_t *arg3 __maybe_unused = va_arg(ap, uint8_t *);	/* sectors' state buf address */
+	uint32_t arg4 __maybe_unused = va_arg(ap, uint32_t);	/* set/clear bp count */
 
 	STUB_LOGD("%s arg1 %x, arg2 %d\n", __func__, arg1, arg2);
 
@@ -1068,61 +1270,81 @@ static int stub_flash_handler(int cmd, va_list ap)
 	uint32_t flash_size = stub_flash_get_size();
 	if (flash_size == 0) {
 		STUB_LOGE("Failed to get flash size!\n");
-		ret = cmd == ESP_STUB_CMD_FLASH_SIZE ? 0 : ESP_STUB_ERR_FAIL;
-		goto _flash_end;
-	}
-	if (cmd == ESP_STUB_CMD_FLASH_SIZE) {
-		ret = flash_size;
-		goto _flash_end;
-	}
-	esp_rom_spiflash_config_param(g_rom_flashchip.device_id,
-		flash_size,
-		STUB_FLASH_BLOCK_SIZE,
-		STUB_FLASH_SECTOR_SIZE,
-		STUB_FLASH_PAGE_SIZE,
-		STUB_FLASH_STATUS_MASK);
+		if (cmd != ESP_STUB_CMD_FLASH_MAP_GET) {
+			ret = ESP_STUB_ERR_FAIL;
+			goto _flash_end;
+		}
+		/* We will fill the esp_stub_flash_map struct and set the return code there */
+	} else {
+		esp_rom_spiflash_config_param(g_rom_flashchip.device_id,
+			flash_size,
+			STUB_FLASH_BLOCK_SIZE,
+			STUB_FLASH_SECTOR_SIZE,
+			STUB_FLASH_PAGE_SIZE,
+			STUB_FLASH_STATUS_MASK);
 
-	esp_rom_spiflash_result_t rc = esp_rom_spiflash_unlock();
-	if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
-		STUB_LOGE("Failed to unlock flash (%d)\n", rc);
-		ret = ESP_STUB_ERR_FAIL;
-		goto _flash_end;
+		esp_rom_spiflash_result_t rc = esp_rom_spiflash_unlock();
+		if (rc != ESP_ROM_SPIFLASH_RESULT_OK) {
+			STUB_LOGE("Failed to unlock flash (%d)\n", rc);
+			ret = ESP_STUB_ERR_FAIL;
+			goto _flash_end;
+		}
 	}
 
 	switch (cmd) {
+#ifdef CMD_FLASH_READ
 	case ESP_STUB_CMD_FLASH_READ:
 		ret = stub_flash_read(arg1, arg2);
 		break;
+#endif
+#ifdef CMD_FLASH_ERASE
 	case ESP_STUB_CMD_FLASH_ERASE:
 		ret = stub_flash_erase(arg1, arg2);
 		break;
+#endif
+#ifdef CMD_FLASH_ERASE_CHECK
 	case ESP_STUB_CMD_FLASH_ERASE_CHECK:
 		ret = stub_flash_erase_check(arg1, arg2, arg3);
 		break;
+#endif
+#ifdef CMD_FLASH_WRITE
 	case ESP_STUB_CMD_FLASH_WRITE:
 		ret = stub_flash_write((void *)arg1);
 		break;
+#endif
+#ifdef CMD_FLASH_WRITE_DEFLATED
 	case ESP_STUB_CMD_FLASH_WRITE_DEFLATED:
 		ret = stub_flash_write_deflated((void *)arg1);
 		break;
+#endif
+#ifdef CMD_FLASH_CALC_HASH
 	case ESP_STUB_CMD_FLASH_CALC_HASH:
 		ret = stub_flash_calc_hash(arg1, arg2, arg3);
 		break;
+#endif
+#if defined(CMD_FLASH_MAP_GET) || defined(CMD_FLASH_MULTI_COMMAND) || defined(CMD_FLASH_IDF_BINARY)
 	case ESP_STUB_CMD_FLASH_MAP_GET:
-		ret = stub_flash_get_map(arg1, arg2);
+		ret = stub_flash_get_map(arg1, arg2, flash_size);
 		break;
+#endif
+#if defined(CMD_FLASH_BP_SET) || defined(CMD_FLASH_MULTI_COMMAND) || defined(CMD_FLASH_IDF_BINARY)
 	case ESP_STUB_CMD_FLASH_BP_SET:
-		ret = stub_flash_set_bp(arg1, arg2, arg3);
+		ret = stub_flash_set_bp_multi((void *)arg1, (void *)arg2, (void *)arg3, arg4);
 		break;
+#endif
+#if defined(CMD_FLASH_BP_CLEAR) || defined(CMD_FLASH_MULTI_COMMAND) || defined(CMD_FLASH_IDF_BINARY)
 	case ESP_STUB_CMD_FLASH_BP_CLEAR:
-		ret = stub_flash_clear_bp(arg1, arg2, arg3);
+		ret = stub_flash_clear_bp_multi((void *)arg1, (void *)arg2, (void *)arg3, arg4);
 		break;
-	case ESP_STUB_CMD_CLOCK_CONFIGURE:
+#endif
+#ifdef CMD_FLASH_CLOCK_CONFIGURE
+	case ESP_STUB_CMD_FLASH_CLOCK_CONFIGURE:
 		ret = stub_cpu_clock_configure(arg1);
 		if (stub_get_log_dest() == STUB_LOG_DEST_UART)
 			stub_uart_console_configure(stub_get_log_dest());
 		break;
-#if STUB_DEBUG
+#endif
+#ifdef CMD_FLASH_TEST
 	case ESP_STUB_CMD_FLASH_TEST:
 		ret = stub_flash_test();
 		break;
@@ -1173,14 +1395,13 @@ const char *cmd_to_str(int cmd)
 	case ESP_STUB_CMD_FLASH_WRITE: return "FLASH_WRITE";
 	case ESP_STUB_CMD_FLASH_ERASE: return "FLASH_ERASE";
 	case ESP_STUB_CMD_FLASH_ERASE_CHECK: return "FLASH_ERASE_CHECK";
-	case ESP_STUB_CMD_FLASH_SIZE: return "FLASH_SIZE";
 	case ESP_STUB_CMD_FLASH_MAP_GET: return "FLASH_MAP_GET";
 	case ESP_STUB_CMD_FLASH_BP_SET: return "FLASH_BP_SET";
 	case ESP_STUB_CMD_FLASH_BP_CLEAR: return "FLASH_BP_CLEAR";
 	case ESP_STUB_CMD_FLASH_TEST: return "FLASH_TEST";
 	case ESP_STUB_CMD_FLASH_WRITE_DEFLATED: return "FLASH_WRITE_DEFLATED";
 	case ESP_STUB_CMD_FLASH_CALC_HASH: return "FLASH_CALC_HASH";
-	case ESP_STUB_CMD_CLOCK_CONFIGURE: return "CLOCK_CONFIGURE";
+	case ESP_STUB_CMD_FLASH_CLOCK_CONFIGURE: return "CLOCK_CONFIGURE";
 	default: return "";
 	}
 }

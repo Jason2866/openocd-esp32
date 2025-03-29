@@ -90,9 +90,11 @@ struct esp32_apptrace_block {
 };
 
 struct esp32_gcov_cmd_data {
-	FILE *files[ESP_GCOV_FILES_MAX_NUM];
+	FILE * files[ESP_GCOV_FILES_MAX_NUM];
 	uint32_t files_num;
 	bool wait4halt;
+	int prefix_strip;
+	char *prefix;
 };
 
 static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
@@ -414,6 +416,8 @@ static int esp32_apptrace_wait_tracing_finished(struct esp32_apptrace_cmd_ctx *c
 			LOG_ERROR("Failed to wait for pended trace blocks!");
 			return ERROR_FAIL;
 		}
+		/* let registered timer callbacks to run */
+		target_call_timer_callbacks();
 	}
 	/* signal timer callback to stop */
 	ctx->running = 0;
@@ -891,7 +895,7 @@ static int esp32_apptrace_get_data_info(struct esp32_apptrace_cmd_ctx *ctx,
 	for (unsigned int i = 0; i < ctx->cores_num; i++) {
 		int res = ctx->hw->data_len_read(ctx->cpus[i], &target_state[i].block_id, &target_state[i].data_len);
 		if (res != ERROR_OK) {
-			LOG_ERROR("Failed to read data len on (%s)!", target_name(ctx->cpus[i]));
+			LOG_TARGET_ERROR(ctx->cpus[i], "Failed to read data len!");
 			return res;
 		}
 		if (target_state[i].data_len) {
@@ -1064,6 +1068,14 @@ static int esp32_apptrace_poll(void *priv)
 		return ERROR_FAIL;
 	}
 
+	/* Check if re-initialization is needed due to the target resetting between data transfers. */
+	if (ctx->hw->apptrace_is_inited) {
+		for (unsigned int i = 0; i < ctx->cores_num; i++) {
+			if (!ctx->hw->apptrace_is_inited(ctx->cpus[i]))
+				return ERROR_WAIT;
+		}
+	}
+
 	/*  Check for connection is alive.For some reason target and therefore host_connected flag
 	 *  might have been reset */
 	res = esp32_apptrace_check_connection(ctx);
@@ -1080,8 +1092,8 @@ static int esp32_apptrace_poll(void *priv)
 		LOG_ERROR("Failed to read data len!");
 		return res;
 	}
-	/* LOG_DEBUG("Block %d (%d bytes) on target (%s)!", target_state[0].block_id,
-	 * target_state[0].data_len, target_name(ctx->cpus[0])); */
+	/* LOG_TARGET_DEBUG(ctx->cpus[0], "Block %d (%d bytes) on target (%s)!", target_state[0].block_id,
+	 * target_state[0].data_len); */
 	if (fired_target_num == UINT32_MAX) {
 		/* no data has been received, but block could be switched due to the data transferred
 		 * from host to target */
@@ -1480,12 +1492,12 @@ static int esp32_cmd_apptrace_generic(struct command_invocation *cmd, int mode, 
 	if (target->smp && !target_was_examined(target)) {
 		struct target_list *head;
 		struct target *curr;
-		LOG_WARNING("Current target '%s' was not examined!", target_name(target));
+		LOG_TARGET_WARNING(target, "Current target was not examined!");
 		foreach_smp_target(head, target->smp_targets) {
 			curr = head->target;
 			if (target_was_examined(curr)) {
 				target = curr;
-				LOG_WARNING("Run command on target '%s'", target_name(target));
+				LOG_TARGET_WARNING(target, "Run command on this target");
 				break;
 			}
 		}
@@ -1639,8 +1651,8 @@ COMMAND_HANDLER(esp32_cmd_sysview_mcore)
 
 static int esp_gcov_cmd_init(struct esp32_apptrace_cmd_ctx *cmd_ctx,
 	struct command_invocation *cmd,
-	const char **argv,
-	int argc)
+	char *prefix,
+	int prefix_strip)
 {
 	int res = esp32_apptrace_cmd_ctx_init(cmd_ctx, cmd, ESP_APPTRACE_CMD_MODE_SYNC);
 	if (res)
@@ -1653,12 +1665,12 @@ static int esp_gcov_cmd_init(struct esp32_apptrace_cmd_ctx *cmd_ctx,
 		esp32_apptrace_cmd_ctx_cleanup(cmd_ctx);
 		return ERROR_FAIL;
 	}
+
+	cmd_data->prefix = prefix;
+	cmd_data->prefix_strip = prefix_strip;
+
 	cmd_ctx->stop_tmo = 3.0;
 	cmd_ctx->cmd_priv = cmd_data;
-
-	if (argc > 0)
-		cmd_data->wait4halt = strtoul(argv[0], NULL, 10);
-
 	cmd_ctx->trace_format.hdr_sz = ESP32_APPTRACE_USER_BLOCK_HDR_SZ;
 	cmd_ctx->trace_format.core_id_get = esp32_apptrace_core_id_get;
 	cmd_ctx->trace_format.usr_block_len_get = esp32_apptrace_usr_block_len_get;
@@ -1676,6 +1688,7 @@ static int esp_gcov_cmd_cleanup(struct esp32_apptrace_cmd_ctx *cmd_ctx)
 			res = ERROR_FAIL;
 		}
 	}
+	free(cmd_data->prefix);
 	free(cmd_data);
 	cmd_ctx->cmd_priv = NULL;
 	esp32_apptrace_cmd_ctx_cleanup(cmd_ctx);
@@ -1684,13 +1697,19 @@ static int esp_gcov_cmd_cleanup(struct esp32_apptrace_cmd_ctx *cmd_ctx)
 
 #ifdef _WIN32
 #define DIR_SEPARATORS      ("\\/")
-#define IS_DIR_SEPARATOR(c) ((c) == '\\' || (c) == '/')
+static inline bool is_dir_seperator(char c)
+{
+	return c == '\\' || c == '/';
+}
 #else
 #define DIR_SEPARATORS      ("/")
-#define IS_DIR_SEPARATOR(c) ((c) == '/')
+static inline bool is_dir_seperator(char c)
+{
+	return c == '/';
+}
 #endif
 
-static const char *esp_gcov_filename_alloc(const char *orig_fname)
+static char *esp_gcov_filename_alloc(struct esp32_gcov_cmd_data *cmd_data, const char *orig_fname)
 {
 	const char *gcov_prefix;
 	size_t prefix_length;
@@ -1700,31 +1719,36 @@ static const char *esp_gcov_filename_alloc(const char *orig_fname)
 		return NULL;
 
 	LOG_DEBUG("Convert gcov file path '%s'", orig_fname);
-	/* Check if the level of dirs to strip off specified. */
-	char *tmp = getenv("OPENOCD_GCOV_PREFIX_STRIP");
-	if (tmp) {
-		strip = atoi(tmp);
-		/* Do not consider negative values. */
-		if (strip < 0)
-			strip = 0;
+
+	if (cmd_data->prefix) {
+		strip = cmd_data->prefix_strip;
+		gcov_prefix = cmd_data->prefix;
+	} else {
+		char *tmp = getenv("OPENOCD_GCOV_PREFIX_STRIP");
+		if (tmp)
+			strip = atoi(tmp);
+		/* Get file name relocation prefix. Non-absolute values are ignored. */
+		gcov_prefix = getenv("OPENOCD_GCOV_PREFIX");
 	}
 
-	/* Get file name relocation prefix. Non-absolute values are ignored. */
-	gcov_prefix = getenv("OPENOCD_GCOV_PREFIX");
 	prefix_length = gcov_prefix ? strlen(gcov_prefix) : 0;
 
+	/* Do not consider negative values. */
+	if (strip < 0)
+		strip = 0;
+
 	/* Remove an unnecessary trailing '/' */
-	if (prefix_length && IS_DIR_SEPARATOR(gcov_prefix[prefix_length - 1]))
+	if (prefix_length && is_dir_seperator(gcov_prefix[prefix_length - 1]))
 		prefix_length--;
 
-	/* If no prefix was specified and a prefix stip, then we assume relative.  */
+	/* If no prefix was specified and a prefix strip, then we assume relative.  */
 	if (!prefix_length && strip) {
 		gcov_prefix = ".";
 		prefix_length = 1;
 	}
 
 	/* Allocate and initialize the filename scratch space.  */
-	char *filename = (char *)malloc(prefix_length + orig_fname_len + 1);
+	char *filename = malloc(prefix_length + orig_fname_len + 1);
 	if (prefix_length)
 		memcpy(filename, gcov_prefix, prefix_length);
 	const char *striped_fname = orig_fname;
@@ -1734,13 +1758,13 @@ static const char *esp_gcov_filename_alloc(const char *orig_fname)
 		 * path can contain mixed Windows and Unix and */
 		/* can look like
 		 * `c:\esp\esp-idf\examples\system\gcov\build/esp-idf/main/CMakeFiles/__idf_main.dir/gcov_example.c.gcda` */
-		tmp = strpbrk(striped_fname + 1, DIR_SEPARATORS);
+		char *tmp = strpbrk(striped_fname + 1, DIR_SEPARATORS);
 		if (!tmp)
 			break;
 		striped_fname = tmp;
 	}
 	if (strip > 0)
-		LOG_WARNING("Failed to srip %d dir names in gcov file path '%s'!", strip, orig_fname);
+		LOG_WARNING("Failed to strip %d dir names in gcov file path '%s'!", strip, orig_fname);
 	strcpy(&filename[prefix_length], striped_fname);
 
 	return filename;
@@ -1753,6 +1777,7 @@ static int esp_gcov_fopen(struct target *target,
 	uint8_t **resp,
 	uint32_t *resp_len)
 {
+	char *cdata = (char *)data;
 	*resp_len = 0;
 	if (cmd_data->files_num == ESP_GCOV_FILES_MAX_NUM) {
 		LOG_ERROR("Max gcov files num exceeded!");
@@ -1763,7 +1788,7 @@ static int esp_gcov_fopen(struct target *target,
 		LOG_ERROR("Missed FOPEN args!");
 		return ERROR_FAIL;
 	}
-	int len = strlen((char *)data);
+	int len = strlen(cdata);
 	if (len == 0) {
 		LOG_ERROR("Missed FOPEN path arg!");
 		return ERROR_FAIL;
@@ -1774,8 +1799,8 @@ static int esp_gcov_fopen(struct target *target,
 	}
 
 	uint32_t fd = cmd_data->files_num;
-	char *mode = (char *)data + len + 1;
-	const char *fname = esp_gcov_filename_alloc((const char *)data);
+	char *mode = cdata + len + 1;
+	char *fname = esp_gcov_filename_alloc(cmd_data, cdata);
 	if (!fname) {
 		LOG_ERROR("Failed to alloc memory for file name!");
 		return ERROR_FAIL;
@@ -1797,7 +1822,7 @@ static int esp_gcov_fopen(struct target *target,
 		LOG_ERROR("Failed to alloc mem for resp!");
 		if (fd != 0)
 			fclose(cmd_data->files[fd - 1]);
-		free((void *)fname);
+		free(fname);
 		return ERROR_FAIL;
 	}
 	target_buffer_set_u32(target, *resp, fd);
@@ -1805,7 +1830,7 @@ static int esp_gcov_fopen(struct target *target,
 	if (fd != 0)
 		cmd_data->files_num++;
 
-	free((void *)fname);
+	free(fname);
 	return ERROR_OK;
 }
 
@@ -1821,7 +1846,9 @@ static int esp_gcov_fclose(struct target *target,
 		LOG_ERROR("Missed FCLOSE args!");
 		return ERROR_FAIL;
 	}
+
 	uint32_t fd = target_buffer_get_u32(target, data);
+	LOG_INFO("Close file 0x%x", fd);
 	fd--;
 	if (fd >= ESP_GCOV_FILES_MAX_NUM) {
 		LOG_ERROR("Invalid file desc received 0x%x!", fd);
@@ -2033,7 +2060,6 @@ static int esp_gcov_feof(struct target *target,
 	}
 
 	int32_t fret = feof(cmd_data->files[fd]);
-
 	*resp_len = sizeof(fret);
 	*resp = malloc(*resp_len);
 	if (!*resp) {
@@ -2043,6 +2069,15 @@ static int esp_gcov_feof(struct target *target,
 	target_buffer_set_u32(target, *resp, fret);
 
 	return ERROR_OK;
+}
+
+static const char *apptrace_file_cmd_to_str(const uint8_t cmd)
+{
+	static const char *const commands[] = {"FOPEN", "FCLOSE", "FWRITE", "FREAD", "FSEEK", "FTELL", "FSTOP", "FEOF"};
+
+	if (cmd > ESP_APPTRACE_FILE_CMD_FEOF)
+		return "<unknown>";
+	return commands[cmd];
 }
 
 /*TODO: support for multi-block data transfers */
@@ -2056,14 +2091,14 @@ static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
 	uint8_t *resp;
 	uint32_t resp_len = 0;
 
-	LOG_DEBUG("Got block %d bytes [%x %x]", data_len, data[0], data[1]);
+	LOG_TARGET_DEBUG(ctx->cpus[core_id], "Got block %d bytes [%x %x]", data_len, data[0], data[1]);
 
 	if (data_len < 1) {
 		LOG_ERROR("Too small data length %d!", data_len);
 		return ERROR_FAIL;
 	}
 
-	LOG_DEBUG("Apptrace FCMD: 0x%x", *data);
+	LOG_TARGET_DEBUG(ctx->cpus[core_id], "Apptrace FCMD=0x%x (%s)", *data, apptrace_file_cmd_to_str(*data));
 
 	switch (*data) {
 	case ESP_APPTRACE_FILE_CMD_FOPEN:
@@ -2091,11 +2126,16 @@ static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
 		ret = esp_gcov_feof(ctx->cpus[core_id], cmd_data, data + 1, data_len - 1, &resp, &resp_len);
 		break;
 	default:
-		LOG_ERROR("Invalid FCMD 0x%x!", *data);
+		LOG_TARGET_ERROR(ctx->cpus[core_id], "Invalid FCMD 0x%x!", *data);
 		ret = ERROR_FAIL;
 	}
 	if (ret != ERROR_OK)
 		return ret;
+
+	/*
+	    File operation errors (fclose, fread, fwrite, fseek, ftell...) will be handled on the target side
+		Therefore, we didn't return with error code in order to send the failure reason to the target
+	*/
 
 	if (resp_len) {
 		/* write response */
@@ -2104,7 +2144,7 @@ static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
 			resp,
 			resp_len);
 		if (res != ERROR_OK) {
-			LOG_ERROR("Failed to write data to (%s)!", target_name(ctx->cpus[core_id]));
+			LOG_TARGET_ERROR(ctx->cpus[core_id], "Failed to write data!");
 			free(resp);
 			return res;
 		}
@@ -2118,10 +2158,10 @@ static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
 				true /*host connected*/,
 				true /*host data*/);
 			if (res != ERROR_OK) {
-				LOG_ERROR("Failed to ack data on (%s)!", target_name(ctx->cpus[i]));
+				LOG_TARGET_ERROR(ctx->cpus[i], "Failed to ack data!");
 				return res;
 			}
-			LOG_DEBUG("Ack block %d target (%s)!", ctx->last_blk_id, target_name(ctx->cpus[i]));
+			LOG_TARGET_DEBUG(ctx->cpus[i], "Ack block %d!", ctx->last_blk_id);
 		}
 	} else {
 		for (unsigned int i = 0; i < ctx->cores_num; i++) {
@@ -2131,10 +2171,10 @@ static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
 				true /*host connected*/,
 				false /*host data*/);
 			if (res != ERROR_OK) {
-				LOG_ERROR("Failed to ack data on (%s)!", target_name(ctx->cpus[i]));
+				LOG_TARGET_ERROR(ctx->cpus[i], "Failed to ack data!");
 				return res;
 			}
-			LOG_DEBUG("Ack block %d target (%s)!", ctx->last_blk_id, target_name(ctx->cpus[i]));
+			LOG_TARGET_DEBUG(ctx->cpus[i], "Ack block %d!", ctx->last_blk_id);
 		}
 	}
 
@@ -2144,7 +2184,7 @@ static int esp_gcov_process_data(struct esp32_apptrace_cmd_ctx *ctx,
 static int esp_gcov_poll(struct target *target, void *priv)
 {
 	int res = ERROR_OK;
-	struct esp32_apptrace_cmd_ctx *cmd_ctx = (struct esp32_apptrace_cmd_ctx *)priv;
+	struct esp32_apptrace_cmd_ctx *cmd_ctx = priv;
 
 	while (!openocd_is_shutdown_pending() && target->state != TARGET_HALTED && cmd_ctx->running) {
 		res = esp32_apptrace_poll(cmd_ctx);
@@ -2204,18 +2244,32 @@ COMMAND_HANDLER(esp32_cmd_gcov)
 	bool dump = false;
 	uint32_t stub_capabilites;
 	bool gcov_idf_has_thread = false;
+	unsigned int prefix_offset = 1, prefix_strip = 0;
+	char *prefix = NULL;
 
-	if (CMD_ARGC > 0) {
-		if (strcmp(CMD_ARGV[0], "dump") == 0) {
-			dump = true;
-		} else {
-			command_print(CMD, "Invalid action!");
-			return ERROR_FAIL;
+	if (CMD_ARGC > 3)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	if (CMD_ARGC >= 1 && !strcmp(CMD_ARGV[0], "dump")) {
+		dump = true;
+		prefix_offset++;
+	}
+
+	if (prefix_offset < CMD_ARGC) {
+		if (strlen(CMD_ARGV[prefix_offset - 1])) {
+			prefix = strdup(CMD_ARGV[prefix_offset - 1]);
+			LOG_INFO("OPENOCD_GCOV_PREFIX: (%s)", prefix);
+		}
+		// GCOV_PREFIX_STRIP can be set without GCOV_PREFIX
+		// In that case we still expect GCOV_PREFIX as an empty string
+		if (++prefix_offset <= CMD_ARGC) {
+			prefix_strip = atoi(CMD_ARGV[prefix_offset - 1]);
+			LOG_INFO("OPENOCD_GCOV_PREFIX_STRIP: (%d)", prefix_strip);
 		}
 	}
 
 	/* init cmd context */
-	res = esp_gcov_cmd_init(&s_at_cmd_ctx, CMD, CMD_ARGV, CMD_ARGC);
+	res = esp_gcov_cmd_init(&s_at_cmd_ctx, CMD, prefix, prefix_strip);
 	if (res != ERROR_OK) {
 		command_print(CMD, "Failed to init cmd ctx (%d)!", res);
 		return res;
@@ -2224,11 +2278,11 @@ COMMAND_HANDLER(esp32_cmd_gcov)
 	if (target->smp && !target_was_examined(target)) {
 		struct target_list *head;
 		struct target *curr = target;
-		LOG_WARNING("Current target '%s' was not examined!", target_name(target));
+		LOG_TARGET_WARNING(target, "Current target was not examined!");
 		foreach_smp_target(head, target->smp_targets) {
 			curr = head->target;
 			if (target_was_examined(curr)) {
-				LOG_WARNING("Run command on target '%s'", target_name(target));
+				LOG_TARGET_WARNING(target, "Run command on this target");
 				break;
 			}
 		}
@@ -2258,7 +2312,7 @@ COMMAND_HANDLER(esp32_cmd_gcov)
 			return res;
 		}
 		struct esp_dbg_stubs *dbg_stubs = get_stubs_from_target(&run_target);
-		if (!dbg_stubs || dbg_stubs->entries_count < 1 || dbg_stubs->desc.data_alloc == 0) {
+		if (!dbg_stubs || dbg_stubs->entries_count < 1 || dbg_stubs->ctl_data.data_alloc == 0) {
 			command_print(CMD, "No dbg stubs found!");
 			esp_gcov_cmd_cleanup(&s_at_cmd_ctx);
 			return ERROR_FAIL;
@@ -2270,7 +2324,7 @@ COMMAND_HANDLER(esp32_cmd_gcov)
 			esp_gcov_cmd_cleanup(&s_at_cmd_ctx);
 			return ERROR_FAIL;
 		}
-		stub_capabilites = dbg_stubs->entries[ESP_DBG_STUB_CAPABILITIES];
+		stub_capabilites = dbg_stubs->entries[ESP_DBG_STUB_ENTRY_CAPABILITIES];
 		gcov_idf_has_thread = stub_capabilites & ESP_DBG_STUB_CAP_GCOV_THREAD;
 		LOG_DEBUG("STUB_CAP = 0x%x", stub_capabilites);
 		memset(&run, 0, sizeof(run));
@@ -2280,13 +2334,13 @@ COMMAND_HANDLER(esp32_cmd_gcov)
 			run.usr_func_arg = &s_at_cmd_ctx;
 			run.usr_func = esp_gcov_poll;
 		}
-		run.on_board.min_stack_addr = dbg_stubs->desc.min_stack_addr;
+		run.on_board.min_stack_addr = dbg_stubs->ctl_data.min_stack_addr;
 		run.on_board.min_stack_size = ESP_DBG_STUBS_STACK_MIN_SIZE;
-		run.on_board.code_buf_addr = dbg_stubs->desc.tramp_addr;
+		run.on_board.code_buf_addr = dbg_stubs->ctl_data.tramp_addr;
 		run.on_board.code_buf_size = ESP_DBG_STUBS_CODE_BUF_SIZE;
 		/* this function works for SMP and non-SMP targets
 		 * set num_args to 1 in order to read return code coming with "a2" reg */
-		esp_xtensa_smp_run_onboard_func(run_target, &run, func_addr, 1);
+		run.hw->run_onboard_func(run_target, &run, func_addr, 1);
 		LOG_DEBUG("FUNC RET = 0x%" PRIx32, run.ret_code);
 		if (run.ret_code == ERROR_OK && gcov_idf_has_thread) {
 			res = target_resume(target, 1, 0, 1, 0);
@@ -2340,7 +2394,7 @@ const struct command_registration esp32_apptrace_command_handlers[] = {
 		.handler = esp32_cmd_gcov,
 		.mode = COMMAND_EXEC,
 		.help = "GCOV: Dumps gcov info collected on target.",
-		.usage = "[dump]",
+		.usage = "[dump] [<prefix> [<prefix_strip>]]",
 	},
 	COMMAND_REGISTRATION_DONE
 };

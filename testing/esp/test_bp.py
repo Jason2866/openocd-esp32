@@ -20,18 +20,11 @@ class BreakpointTestsImpl:
     """
 
     def setUp(self):
-        self.bps = []
-        if testee_info.chip == "esp32c3":
-            # esp32c3 has 8 HW breakpoint slots
-            # 6 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
-            self.bps = ['unused_func0', 'unused_func1', 'unused_func2', 'unused_func3', 'unused_func4', 'unused_func5']
-        elif testee_info.chip == "esp32c6" or testee_info.chip == "esp32h2":
-            # esp32c6 has 4 HW breakpoint slots
-            # 2 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
-            self.bps = ['unused_func0', 'unused_func1']
-        # + 2 HW breaks + 1 flash SW break + RAM SW break
-        self.bps += ['app_main', 'gpio_set_direction', 'gpio_set_level', 'vTaskDelay']
+        # dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
+        self.fill_hw_bps(keep_avail=2)
+        self.bps = ['app_main', 'gpio_set_direction', 'gpio_set_level', 'vTaskDelay']
 
+    @run_all_cores
     def test_multi_reset_break(self):
         """
             This test checks that breakpoint works just after the reset:
@@ -53,14 +46,16 @@ class BreakpointTestsImpl:
             self.assertEqual(cur_frame['func'], 'app_main')
 
     def readd_bps(self):
-        # remove all BPs except the first one
-        for i in range(1, len(self.bpns)):
+        # remove all non-dummy BPs except the first one
+        dummy_bp_count = len(self.bpns) - len(self.bps) + 1
+        for i in range(dummy_bp_count + 1, len(self.bpns)):
             self.gdb.delete_bp(self.bpns[i])
-        self.bpns = self.bpns[:1]
+        self.bpns = self.bpns[:dummy_bp_count + 1]
         # add removed BPs back
-        for i in range(1, len(self.bps)):
-            self.add_bp(self.bps[i])
+        for f in self.bps:
+            self.add_bp(f)
 
+    @run_all_cores
     def test_bp_add_remove_run(self):
         """
             This simple test checks general breakpoints usage scenario.
@@ -87,6 +82,7 @@ class BreakpointTestsImpl:
             self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_BP, 'vTaskDelay', ['vTaskDelay%d' % (i % 2)])
             self.readd_bps()
 
+    @run_all_cores
     def test_bp_ignore_count(self):
         """
             This test checks that the first several breakpoint's hits can be ignored:
@@ -113,6 +109,7 @@ class BreakpointTestsImpl:
                 # break at vTaskDelay
                 self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_BP, 'vTaskDelay', ['vTaskDelay%d' % (i % 2)])
 
+    @run_all_cores
     def test_bp_cond_expr(self):
         """
             This test checks that conditional breakpoint using expression works:
@@ -140,6 +137,7 @@ class BreakpointTestsImpl:
                 # break at vTaskDelay
                 self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_BP, 'vTaskDelay', ['vTaskDelay%d' % (i % 2)])
 
+    @run_all_cores
     def test_bp_and_reconnect(self):
         """
             This test checks that breakpoints work after GDB re-connection.
@@ -170,6 +168,7 @@ class BreakpointTestsImpl:
             sleep(0.1) #sleep 100ms
             self.gdb.connect()
 
+    @run_all_cores
     def test_bp_in_isr(self):
         """
             This test checks that the breakpoint's are handled in ISR properly:
@@ -185,8 +184,8 @@ class BreakpointTestsImpl:
         for f in self.bps:
             self.add_bp(f)
 
-        # riscv gdb11 workaround
-        run_bt = True if testee_info.arch == "riscv32" and testee_info.idf_ver >= IdfVersion.fromstr('5.0') else False
+        # riscv workaround
+        run_bt = testee_info.arch == "riscv32"
         for i in range(3):
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr', run_bt)
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr_func', run_bt)
@@ -198,6 +197,7 @@ class WatchpointTestsImpl:
 
     wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP, dbg.TARGET_STOP_REASON_WP]
 
+    @run_all_cores
     def test_wp_simple(self):
         """
             This simple test checks general watchpoints usage scenario.
@@ -229,6 +229,7 @@ class WatchpointTestsImpl:
             self.assertEqual(var_val, cnt+1)
             cnt += 1
 
+    @run_all_cores
     def test_wp_and_reconnect(self):
         """
             This test checks that watchpoints work after GDB re-connection.
@@ -315,7 +316,6 @@ def two_cores_concurrently_hit_wps(self):
     for i in range(10):
         self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11', 's_count2'])
 
-
 def appcpu_early_hw_bps(self):
     """
         This test checks if breakpoints set on APP_CPU just after reset work well.
@@ -323,25 +323,25 @@ def appcpu_early_hw_bps(self):
     self.gdb.target_reset()
     rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
     self.add_bp('call_start_cpu1', hw=True)
+    faddr = self.gdb.extract_exec_addr(self.gdb.data_eval_expr("&call_start_cpu1"))
+    targets = self.oocd.targets()
+
+    def check_bp_hit_on_cpu(cpu_num):
+        self.oocd.cmd_exec(f"targets {targets[cpu_num]}")
+        pc = self.oocd.get_reg('pc')
+        self.oocd.cmd_exec(f"targets {targets[0]}")
+        self.assertEqual(pc, faddr)
+
     self.resume_exec()
     self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
-    # We stopped when FreRTOS is not running yet, so GDB is connected to
-    # one core only (most probably core 0) and shows only one thread representing that core.
-    # Prepare to switch GDB to core 1.
-    self.gdb.monitor_run("esp32 smp_gdb 1", 5)
     try:
-        # Switch GDB to core 1.
-        self.gdb.monitor_run("resume", 5)
-        # Invalidate register cache to re-read them and get proper backtrace
-        self.gdb.console_cmd_run("maint flush register-cache", 5)
-        # In this scenario we can not check stop reason for core 1,
-        # because GDB could be initially connected to core 0.
-        # So just check the function name we stopped in on core 1.
-        frame = self.gdb.read_current_frame()
-        self.assertEqual(frame['func'], 'call_start_cpu1')
-    finally:
-        # restore default GDB SMP handling to avoid other tests failures
-        self.gdb.monitor_run("esp32 smp_gdb -1", 5)
+        check_bp_hit_on_cpu(1)
+    except:
+        # The breakpoint can trigger on cpu0 first, before the bootloader code is loaded
+        check_bp_hit_on_cpu(0)
+        self.resume_exec()
+        self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
+        check_bp_hit_on_cpu(1)
 
 class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTestsImpl):
     """ Test cases for breakpoints in dual core mode
@@ -351,11 +351,10 @@ class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTes
         DebuggerGenericTestAppTestsDual.setUp(self)
         BreakpointTestsImpl.setUp(self)
 
+    @skip_for_chip_and_ver(['5.1'], ['esp32s3'], "skipped - OCD-1027")
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
 
-    # OCD-773
-    @idf_ver_min_for_chip('5.1', ['esp32'])
     def test_appcpu_early_hw_bps(self):
         appcpu_early_hw_bps(self)
 
@@ -369,8 +368,6 @@ class DebuggerBreakpointTestsDualEncrypted(DebuggerGenericTestAppTestsDualEncryp
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
 
-    # OCD-773
-    @idf_ver_min_for_chip('5.1', ['esp32'])
     def test_appcpu_early_hw_bps(self):
         appcpu_early_hw_bps(self)
 
@@ -410,3 +407,21 @@ class DebuggerWatchpointTestsSingleEncrypted(DebuggerGenericTestAppTestsSingleEn
     """ Watchpoint test cases on encrypted flash in single core mode
     """
     pass
+
+class DebuggerTestsSingle4MB(DebuggerGenericTestAppTestsSingle):
+    """ Base class to run tests with a single core 4MB flash config
+    """
+
+    def __init__(self, methodName='runTest'):
+        super(DebuggerTestsSingle4MB, self).__init__(methodName)
+        self.test_app_cfg.bin_dir = os.path.join('output', 'single_core_4MB')
+        self.test_app_cfg.build_dir = os.path.join('builds', 'single_core_4MB')
+
+@only_for_chip(['esp32c2', 'esp32c6', 'esp32h2'])
+class FlashTestsSingle4MB(DebuggerTestsSingle4MB, BreakpointTestsImpl):
+    """ Breakpoint test cases via GDB in single core mode with 4MB flash config
+    """
+
+    def setUp(self):
+        DebuggerTestsSingle4MB.setUp(self)
+        BreakpointTestsImpl.setUp(self)

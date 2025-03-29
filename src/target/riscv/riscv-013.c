@@ -46,7 +46,6 @@ static int riscv013_halt_prep(struct target *target);
 static int riscv013_halt_go(struct target *target);
 static int riscv013_resume_go(struct target *target);
 static int riscv013_step_current_hart(struct target *target);
-static int riscv013_on_halt(struct target *target); /* ESPRESSIF */
 static int riscv013_on_step(struct target *target);
 static int riscv013_resume_prep(struct target *target);
 static enum riscv_halt_reason riscv013_halt_reason(struct target *target);
@@ -123,7 +122,7 @@ typedef enum slot {
 
 typedef struct {
 	struct list_head list;
-	int abs_chain_position;
+	unsigned int abs_chain_position;
 	/* The base address to access this DM on DMI */
 	uint32_t base;
 	/* The number of harts connected to this DM. */
@@ -214,7 +213,7 @@ typedef struct {
 	bool haltgroup_supported;
 } riscv013_info_t;
 
-static LIST_HEAD(dm_list);
+static OOCD_LIST_HEAD(dm_list);
 
 static riscv013_info_t *get_info(const struct target *target)
 {
@@ -235,7 +234,7 @@ static dm013_info_t *get_dm(struct target *target)
 	if (info->dm)
 		return info->dm;
 
-	int abs_chain_position = target->tap->abs_chain_position;
+	unsigned int abs_chain_position = target->tap->abs_chain_position;
 
 	dm013_info_t *entry;
 	dm013_info_t *dm = NULL;
@@ -393,7 +392,7 @@ static void dump_field(struct target *target, int idle, const struct scan_field 
 	unsigned int in_address = in >> DTM_DMI_ADDRESS_OFFSET;
 
 	log_printf_lf(LOG_LVL_DEBUG, __FILE__, __LINE__, __func__,
-			"%db %s %08x @%02x -> %s %08x @%02x; %di",
+			"%ub %s %08x @%02x -> %s %08x @%02x; %di",
 			field->num_bits, op_string[out_op], out_data, out_address,
 			status_string[in_op], in_data, in_address, idle);
 
@@ -523,7 +522,7 @@ static dmi_status_t dmi_scan(struct target *target, uint32_t *address_in,
 		jtag_add_dr_scan(target->tap, 1, &field, TAP_IDLE);
 	}
 
-	int idle_count = info->dmi_busy_delay;
+	int idle_count = info->dmi_busy_delay + info->dtmcs_idle;
 	if (exec)
 		idle_count += info->ac_busy_delay;
 
@@ -794,6 +793,19 @@ static int dmstatus_read_timeout(struct target *target, uint32_t *dmstatus,
 			DM_DMSTATUS, 0, timeout_sec, false, true);
 	if (result != ERROR_OK)
 		return result;
+
+	/* ESPRESSIF */
+	if (*dmstatus == 0) {
+		uint32_t dmcontrol;
+		/* after unexpected resets on some targets, dmcontrol could be inactive. */
+		if (dm_read(target, &dmcontrol, DM_DMCONTROL) == ERROR_OK) {
+			if (!get_field(dmcontrol, DM_DMCONTROL_DMACTIVE)) {
+				LOG_TARGET_ERROR(target, "Debug Module is not active! dmcontrol=0x%" PRIx32, dmcontrol);
+				return dm_write(target, DM_DMCONTROL, DM_DMCONTROL_DMACTIVE);
+			}
+		}
+	}
+
 	int dmstatus_version = get_field(*dmstatus, DM_DMSTATUS_VERSION);
 	if (dmstatus_version != 2 && dmstatus_version != 3) {
 		LOG_ERROR("OpenOCD only supports Debug Module version 2 (0.13) and 3 (1.0), not "
@@ -1926,11 +1938,31 @@ static int examine(struct target *target)
 	dm013_info_t *dm = get_dm(target);
 	if (!dm)
 		return ERROR_FAIL;
+
+	uint32_t dmcontrol;
 	if (!dm->was_reset) {
 		dm_write(target, DM_DMCONTROL, 0);
 		dm_write(target, DM_DMCONTROL, DM_DMCONTROL_DMACTIVE);
 		dm->was_reset = true;
 	}
+
+	/* ESPRESSIF: workaround to handle external reset while target is halted.
+		If reset happens, target will go into running state, but allhavereset, anyhavereset,
+		allhalted and anyhalted bits will remain set. dmstatus = 0x000f03a2
+	*/
+	uint32_t dmstatus;
+	if (dmstatus_read(target, &dmstatus, false) != ERROR_OK)
+		return ERROR_FAIL;
+	enum riscv_hart_state state_at_examine_start = RISCV_STATE_NON_EXISTENT;
+	if (get_field(dmstatus, DM_DMSTATUS_ALLHAVERESET) && get_field(dmstatus, DM_DMSTATUS_ALLHALTED)) {
+		/* By changing the actual state, we allow the target to go into a halted state before accessing registers
+			via abstract commands. This will avoid busy timeout errors. */
+		/* TODO: check SMP target behaviour */
+		target->state = TARGET_RESET;
+		state_at_examine_start = RISCV_STATE_RUNNING;
+		LOG_TARGET_INFO(target, "external reset happened in halted state (dmstatus:0x%08x)", dmstatus);
+	}
+
 	/* We're here because we're uncertain about the state of the target. That
 	 * includes our progbuf cache. */
 	riscv013_invalidate_cached_progbuf(target);
@@ -1939,7 +1971,6 @@ static int examine(struct target *target)
 			DM_DMCONTROL_HARTSELHI | DM_DMCONTROL_DMACTIVE |
 			DM_DMCONTROL_HASEL);
 	dm->current_hartid = HART_INDEX_UNKNOWN;
-	uint32_t dmcontrol;
 	if (dm_read(target, &dmcontrol, DM_DMCONTROL) != ERROR_OK)
 		return ERROR_FAIL;
 	/* Ensure the HART_INDEX_UNKNOWN is flushed out */
@@ -1955,7 +1986,6 @@ static int examine(struct target *target)
 
 	dm->hasel_supported = get_field(dmcontrol, DM_DMCONTROL_HASEL);
 
-	uint32_t dmstatus;
 	if (dmstatus_read(target, &dmstatus, false) != ERROR_OK)
 		return ERROR_FAIL;
 	LOG_TARGET_DEBUG(target, "dmstatus:  0x%08x", dmstatus);
@@ -2053,9 +2083,10 @@ static int examine(struct target *target)
 	if (dm013_select_hart(target, info->index) != ERROR_OK)
 		return ERROR_FAIL;
 
-	enum riscv_hart_state state_at_examine_start;
-	if (riscv_get_hart_state(target, &state_at_examine_start) != ERROR_OK)
-		return ERROR_FAIL;
+	if (state_at_examine_start == RISCV_STATE_NON_EXISTENT) {
+		if (riscv_get_hart_state(target, &state_at_examine_start) != ERROR_OK)
+			return ERROR_FAIL;
+	}
 	const bool hart_halted_at_examine_start = state_at_examine_start == RISCV_STATE_HALTED;
 	if (!hart_halted_at_examine_start) {
 		r->prepped = true;
@@ -2773,7 +2804,6 @@ static int init_target(struct command_context *cmd_ctx,
 	generic_info->get_hart_state = &riscv013_get_hart_state;
 	generic_info->resume_go = &riscv013_resume_go;
 	generic_info->step_current_hart = &riscv013_step_current_hart;
-	generic_info->on_halt = &riscv013_on_halt; /* ESPRESSIF */
 	generic_info->resume_prep = &riscv013_resume_prep;
 	generic_info->halt_prep = &riscv013_halt_prep;
 	generic_info->halt_go = &riscv013_halt_go;
@@ -5090,12 +5120,6 @@ static int riscv013_resume_prep(struct target *target)
 static int riscv013_on_step(struct target *target)
 {
 	return riscv013_on_step_or_resume(target, true);
-}
-
-/* ESPRESSIF */
-static int riscv013_on_halt(struct target *target)
-{
-	return ERROR_OK;
 }
 
 static enum riscv_halt_reason riscv013_halt_reason(struct target *target)
