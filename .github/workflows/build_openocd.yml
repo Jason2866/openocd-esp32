@@ -70,6 +70,11 @@ jobs:
         with:
           path: tool-openocd-esp32
       - run: |
+          curl -O https://raw.githubusercontent.com/Jason2866/openocd-esp32/m1/package.json
+          cp package.json tool-openocd-esp32/openocd-macos-x86
+          cp package.json tool-openocd-esp32/openocd-macos-arm64
+          cp package.json tool-openocd-esp32/openocd-linux
+          cp package.json tool-openocd-esp32/openocd-windows
           tar -zcf openocd-macos-x86.tar.gz -C tool-openocd-esp32/openocd-macos-x86 .
           tar -zcf openocd-macos-arm64.tar.gz -C tool-openocd-esp32/openocd-macos-arm64 .
           tar -zcf openocd-linux.tar.gz -C tool-openocd-esp32/openocd-linux .
