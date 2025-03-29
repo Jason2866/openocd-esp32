@@ -68,13 +68,12 @@ jobs:
       - name: Download build OpenOCD binaries
         uses: actions/download-artifact@v4
         with:
-          path: artifact
+          path: tool-openocd-esp32
       - run: |
-          ls -R artifact
-          tar -cvf openocd-macos-x86.tar artifact/openocd-macos-x86
-          tar -cvf openocd-macos-arm64.tar artifact/openocd-macos-arm64
-          tar -cvf openocd-linux.tar artifact/openocd-linux
-          tar -cvf openocd-windows.tar artifact/openocd-windows
+          tar -cvf openocd-macos-x86.tar tool-openocd-esp32/openocd-macos-x86
+          tar -cvf openocd-macos-arm64.tar tool-openocd-esp32/openocd-macos-arm64
+          tar -cvf openocd-linux.tar tool-openocd-esp32/openocd-linux
+          tar -cvf openocd-windows.tar tool-openocd-esp32/openocd-windows
       - uses: jason2866/action-gh-release@v1.3
         with:
           tag_name: ${{ github.run_number }}
