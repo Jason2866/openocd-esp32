@@ -60,3 +60,18 @@ jobs:
         uses: ./.github/actions/common-build-steps
         with:
           arch: windows
+
+  release:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: jason2866/action-gh-release@v1.3
+        with:
+          tag_name: ${{ github.run_number }}
+          prerelease: true
+          files: |
+            openocd-linux
+            openocd-macos-arm64
+            openocd-macos-x86
+            openocd-windows
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
