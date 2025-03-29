@@ -65,14 +65,16 @@ jobs:
     needs: [build-macos-x86, build-macos-arm64, build-linux, build-windows]
     runs-on: ubuntu-22.04
     steps:
+      - name: Download build OpenOCD binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openocd-*
+          merge-multiple: true
       - uses: jason2866/action-gh-release@v1.3
         with:
           tag_name: ${{ github.run_number }}
           prerelease: true
           files: |
-            openocd-linux*
-            openocd-macos-arm64*
-            openocd-macos-x86*
-            openocd-windows*
+            openocd-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
