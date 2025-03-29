@@ -69,7 +69,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifact
-          pattern: openocd-*
           merge-multiple: true
       - run: ls -R artifact
       - uses: jason2866/action-gh-release@v1.3
