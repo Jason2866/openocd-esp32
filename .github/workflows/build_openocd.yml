@@ -77,6 +77,6 @@ jobs:
           tag_name: ${{ github.run_number }}
           prerelease: true
           files: |
-            aopenocd/open*
+            openocd/open*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
