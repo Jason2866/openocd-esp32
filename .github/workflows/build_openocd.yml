@@ -62,6 +62,7 @@ jobs:
           arch: windows
 
   release:
+    needs: [build-macos-x86, build-macos-arm64, build-linux, build-windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: jason2866/action-gh-release@v1.3
