@@ -18,7 +18,7 @@ jobs:
       run: |
         uname -a
         brew update
-        brew install bash libtool automake libusb hidapi
+        brew install bash libtool automake libusb hidapi jimtcl
         git clone https://github.com/Jason2866/openocd-esp32.git
         pushd openocd-esp32
         git checkout m1
