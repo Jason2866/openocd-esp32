@@ -70,18 +70,18 @@ jobs:
         with:
           path: tool-openocd-esp32
       - run: |
-          tar -zcf openocd-macos-x86.tar tool-openocd-esp32/openocd-macos-x86
-          tar -zcf openocd-macos-arm64.tar tool-openocd-esp32/openocd-macos-arm64
-          tar -zcf openocd-linux.tar tool-openocd-esp32/openocd-linux
-          tar -zcf openocd-windows.tar tool-openocd-esp32/openocd-windows
+          tar --exclude='tool-openocd-esp32/openocd-macos-x86' -zcf openocd-macos-x86.tar.gz tool-openocd-esp32/openocd-macos-x86
+          tar --exclude='tool-openocd-esp32/openocd-macos-arm64' -zcf openocd-macos-arm64.tar.gz tool-openocd-esp32/openocd-macos-arm64
+          tar --exclude='tool-openocd-esp32/openocd-linux' -zcf openocd-linux.tar.gz tool-openocd-esp32/openocd-linux
+          tar --exclude='tool-openocd-esp32/openocd-windows' -zcf openocd-windows.tar.gz tool-openocd-esp32/openocd-windows
       - uses: jason2866/action-gh-release@v1.3
         with:
           tag_name: ${{ github.run_number }}
           prerelease: true
           files: |
-            openocd-macos-x86.tar
-            openocd-macos-arm64.tar
-            openocd-linux.tar
-            openocd-windows.tar
+            openocd-macos-x86.tar.gz
+            openocd-macos-arm64.tar.gz
+            openocd-linux.tar.gz
+            openocd-windows.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
