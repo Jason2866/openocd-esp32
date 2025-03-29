@@ -70,9 +70,9 @@ jobs:
           tag_name: ${{ github.run_number }}
           prerelease: true
           files: |
-            openocd-linux
-            openocd-macos-arm64
-            openocd-macos-x86
-            openocd-windows
+            openocd-linux*
+            openocd-macos-arm64*
+            openocd-macos-x86*
+            openocd-windows*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
